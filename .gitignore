@@ -43,3 +43,6 @@ runtime/
 *.npz
 *.bin
 *.log
+*.vashishtgraph
+*.tar.gz.enc
+*.sha256

@@ -13,7 +13,7 @@
       <div class="drag-zone"></div>
       <div class="brand">
         <div class="brand-mark">VD</div>
-        <div><strong>Vashisht Devasani</strong><span>Second Brain 2.5.3</span></div>
+        <div><strong>Vashisht Devasani</strong><span>Second Brain 4.0.0</span></div>
       </div>
       <button class="new-chat" id="newChat"><span>＋</span> New conversation</button>
       <nav class="nav">
@@ -41,7 +41,7 @@
             <label for="audience">Conversation</label>
             <select id="audience">
               <option value="self">Just me</option>
-              <option value="partner">With a partner</option>
+              <option value="partner">With Partner</option>
               <option value="friend">With a friend</option>
             </select>
           </div>
@@ -97,11 +97,34 @@
       <section id="knowledgeView" class="view panel-view">
         <header class="topbar"><div><h1>Knowledge</h1><p>What your second brain can currently retrieve</p></div></header>
         <div class="dashboard" id="knowledgeDashboard"></div>
+        <section class="knowledge-explorer">
+          <div class="graph-panel">
+            <div class="graph-heading">
+              <div><span class="eyebrow">Local knowledge map</span><h2>Your topics</h2></div>
+              <div class="graph-tools">
+                <input id="graphSearch" type="search" placeholder="Search every topic…" aria-label="Search your local knowledge">
+                <button id="graphZoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+                <button id="graphReset" title="Reset view" aria-label="Reset graph view">⌂</button>
+                <button id="graphZoomIn" title="Zoom in" aria-label="Zoom in">＋</button>
+              </div>
+            </div>
+            <p class="graph-help" id="graphStatus">Click a topic to expand its most useful files. Drag to pan and scroll to zoom.</p>
+            <svg id="knowledgeGraph" viewBox="0 0 900 570" role="img" aria-label="Interactive graph of knowledge topics"><g id="graphViewport"></g></svg>
+          </div>
+          <aside class="topic-files" id="topicFiles">
+            <div class="empty-topic"><strong>Select a topic</strong><span>Its categorized files will appear here.</span></div>
+          </aside>
+        </section>
       </section>
 
       <section id="trainingView" class="view panel-view">
         <header class="topbar"><div><h1>Training</h1><p>Style adapter and evaluation status</p></div></header>
         <div class="dashboard" id="trainingDashboard"></div>
+        <article class="language-interview" id="languageInterview">
+          <div class="interview-heading"><div><span class="eyebrow">Private language interview</span><h2>Teach my Telugu-English</h2><p>Answer exactly as you would write it. The app learns grammar, word order, transliteration and code-switching—not the emotion of the example.</p></div><strong id="languageProgress">0/40</strong></div>
+          <div class="progress-track"><span id="languageProgressBar"></span></div>
+          <div class="interview-question"><span id="languageCategory"></span><h3 id="languagePrompt">Loading your next question…</h3><textarea id="languageAnswer" rows="3" placeholder="Type exactly how you would say it in your normal Telugu-English mix…"></textarea><div class="interview-actions"><button type="button" class="primary" id="saveLanguageAnswer">Save and next</button><button type="button" id="skipLanguageAnswer">Skip</button></div><small id="languageNote">Do not include names, account numbers, immigration details, or other protected information.</small></div>
+        </article>
       </section>
 
       <section id="settingsView" class="view panel-view">
@@ -111,10 +134,11 @@
           <article class="card wide"><div class="card-icon">＋</div><div><h3>Plus menu</h3><p>The composer’s plus button contains Remember, Train, Think, Add image, and Add file. Files enter the managed index; images are read locally and their text is attached and indexed. Protected-looking content is rejected from ordinary memory and training.</p><button class="primary" id="addFilesSettings">Add files</button></div></article>
           <article class="card wide"><div class="card-icon">◎</div><div><h3>Automatic routing</h3><p>The app chooses the local model, your laptop knowledge, the live web, or both. Personal questions stay local; current information and version-sensitive coding use web evidence; ordinary coding runs directly on Gemma. Protected questions always remain in the encrypted vault.</p></div></article>
           <article class="card wide"><div class="card-icon">●</div><div><h3>Local voice dictation</h3><p>Tap the microphone, speak naturally in English or Telugu, then tap the stop square. Stop immediately turns off the microphone and counter before local MLX Whisper transcription begins. Temporary audio is deleted afterward.</p></div></article>
-          <article class="card wide"><div class="card-icon">⌥</div><div><h3>Jarvis Quick Chat</h3><p>Tap Option-Space to open or hide chat. Hold Option-Space to listen, speak naturally, then release to transcribe, answer from your personal context, and speak the response.</p><button class="primary" id="openQuickChat">Open Quick Chat</button></div></article>
+          <article class="card wide"><div class="card-icon">⌃</div><div><h3>Quick Chat</h3><p>Press Control-Shift-Space from any application to open or hide Quick Chat. Use the microphone button to speak; it transcribes locally, answers from your personal context, and speaks the response. Closing the main window leaves the shortcut active.</p><button class="primary" id="openQuickChat">Open Quick Chat</button></div></article>
           <article class="card wide"><div class="card-icon">◇</div><div><h3>Three-layer intelligence</h3><p>Gemma supplies general reasoning and language ability, your LoRA adapter shapes communication style, and local plus live retrieval supplies personal and current factual knowledge. Sources remain separate so they can update without retraining the model.</p></div></article>
           <article class="card wide"><div class="card-icon">◌</div><div><h3>Private chat</h3><p>Messages in a private chat are kept only in memory for the current request and are not written to conversation history.</p></div></article>
           <article class="card wide"><div class="card-icon">↥</div><div><h3>Backup and migration</h3><p>Create an encrypted portable backup before changing Macs or uploading to private cloud storage. Model downloads and development caches are reinstalled separately.</p><button class="primary" id="openBackupKit">Open migration kit</button></div></article>
+          <article class="card wide"><div class="card-icon">◫</div><div><h3>Portable knowledge graph</h3><p>Aliases, local summaries and graph preferences live in a separate local module. Export them to continue on another Mac; importing merges newer changes without replacing your documents or model.</p><div class="settings-actions"><button class="primary" id="exportGraphState">Export graph state</button><button id="importGraphState">Import and merge</button><span id="graphTransferStatus"></span></div></div></article>
         </div>
       </section>
     </main>

@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('brain', {
   api: (route, options = {}) => ipcRenderer.invoke('local-api', route, options),
+  exportGraphState: () => ipcRenderer.invoke('export-graph-state'),
+  importGraphState: () => ipcRenderer.invoke('import-graph-state'),
   requestMicrophone: () => ipcRenderer.invoke('request-microphone'),
   transcribeAudio: (bytes, mimeType) => ipcRenderer.invoke('transcribe-audio', { bytes, mimeType }),
   copyText: (value) => ipcRenderer.invoke('copy-text', value),

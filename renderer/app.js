@@ -18,7 +18,14 @@ const state = {
   voiceClock: null,
   composerMode: null,
   deepThink: false,
-  imageAttachments: []
+  imageAttachments: [],
+  languageQuestions: [],
+  skippedLanguageQuestions: new Set(),
+  graphTopics: [],
+  graphExpandedTopic: null,
+  graphExpandedFiles: [],
+  graphTransform: { x: 0, y: 0, scale: 1 },
+  graphDrag: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -56,7 +63,7 @@ function updateTools() {
   $('modeDescription').textContent = shared ? 'Shared profile · protected information disabled' : (elements.private.checked ? 'Private session · conversation will not be saved' : 'Your private, source-grounded assistant');
 }
 
-function addMessage(role, content, sources = [], pending = false) {
+function addMessage(role, content, sources = [], pending = false, originalPrompt = '') {
   $('welcome')?.remove();
   const wrapper = document.createElement('article');
   wrapper.className = `message ${role}`;
@@ -69,6 +76,23 @@ function addMessage(role, content, sources = [], pending = false) {
     button.onclick = () => source.url ? window.brain.openExternal(source.url) : (source.path ? window.brain.openPath(source.path) : null);
     sourceList.appendChild(button);
   });
+  if (role === 'assistant' && !pending) {
+    const actions = document.createElement('div');
+    actions.className = 'message-actions';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = 'Copy';
+    copy.onclick = async () => { await window.brain.copyText(content); copy.textContent = 'Copied'; };
+    actions.appendChild(copy);
+    if (originalPrompt) {
+      const correct = document.createElement('button');
+      correct.type = 'button';
+      correct.textContent = 'Correct my style';
+      correct.onclick = () => openStyleCorrection(originalPrompt, content, actions);
+      actions.appendChild(correct);
+    }
+    sourceList.parentElement.appendChild(actions);
+  }
   elements.messages.appendChild(wrapper);
   elements.messages.scrollTop = elements.messages.scrollHeight;
   return wrapper;
@@ -94,7 +118,11 @@ async function openConversation(conversation) {
   updateTools();
   const payload = await api(`/api/conversations/${conversation.id}`);
   elements.messages.innerHTML = '';
-  payload.messages.forEach((message) => addMessage(message.role, message.content, message.sources || []));
+  let priorUserMessage = '';
+  payload.messages.forEach((message) => {
+    addMessage(message.role, message.content, message.sources || [], false, message.role === 'assistant' ? priorUserMessage : '');
+    if (message.role === 'user') priorUserMessage = message.content;
+  });
   refreshConversations();
 }
 
@@ -142,7 +170,7 @@ async function sendMessage(event) {
       body: JSON.stringify({ message, conversationId: state.conversationId, audience: elements.audience.value, toggles: toolState(), imageAttachments: state.imageAttachments })
     });
     pending.remove();
-    addMessage('assistant', payload.message, payload.sources);
+    addMessage('assistant', payload.message, payload.sources, false, message);
     elements.activeTools.textContent = `Used · ${payload.route?.label || 'Local model'}`;
     if (!elements.private.checked) {
       if (payload.conversationId) state.conversationId = payload.conversationId;
@@ -161,6 +189,36 @@ async function sendMessage(event) {
     elements.voice.disabled = state.voiceMode !== 'idle';
     elements.prompt.focus();
   }
+}
+
+async function openStyleCorrection(originalPrompt, assistantResponse, container) {
+  if (container.querySelector('.correction-editor')) return;
+  const editor = document.createElement('div');
+  editor.className = 'correction-editor';
+  editor.innerHTML = `<label>How would you say it?</label><textarea rows="3" placeholder="Type your corrected reply, including your natural Telugu-English mix…"></textarea><div><button type="button" class="save-correction">Learn this correction</button><button type="button" class="cancel-correction">Cancel</button></div><small>This stays local now and enters the privacy-reviewed retraining queue.</small>`;
+  container.appendChild(editor);
+  const textarea = editor.querySelector('textarea');
+  editor.querySelector('.cancel-correction').onclick = () => editor.remove();
+  editor.querySelector('.save-correction').onclick = async () => {
+    const correctedResponse = textarea.value.trim();
+    if (!correctedResponse) return textarea.focus();
+    const save = editor.querySelector('.save-correction');
+    save.disabled = true;
+    save.textContent = 'Learning…';
+    try {
+      const result = await api('/api/style-correction', {
+        method: 'POST',
+        body: JSON.stringify({ prompt: originalPrompt, assistantResponse, correctedResponse, audience: elements.audience.value })
+      });
+      editor.innerHTML = `<small class="correction-saved">${escapeHtml(result.message)}</small>`;
+      setTimeout(refreshStatus, 500);
+    } catch (error) {
+      save.disabled = false;
+      save.textContent = 'Learn this correction';
+      editor.querySelector('small').textContent = `Could not learn: ${error.message}`;
+    }
+  };
+  textarea.focus();
 }
 
 function releaseVoiceHardware() {
@@ -374,8 +432,443 @@ async function refreshStatus() {
     metricCard('Partner style', (counts.high_partner || 0).toLocaleString(), 'high-priority examples'),
     metricCard('Professional email', (counts.email_style || 0).toLocaleString(), 'authored examples'),
     metricCard('Queued by you', (state.status.training?.queued_user_examples || 0).toLocaleString(), 'awaiting reviewed training run'),
+    metricCard('Grammar interview', `${state.status.training?.language_interview?.answered || 0}/${state.status.training?.language_interview?.total || 40}`, 'Telugu-English answers'),
     `<article class="card wide"><div class="card-icon">◇</div><div><h3>${escapeHtml(state.status.training?.model?.status || state.status.training?.status || 'Not started')}</h3><p>The adapter is trained separately from factual knowledge. Protected information is excluded, and factual documents remain in retrieval rather than model weights.</p></div></article>`
   ].join('');
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgElement(name, attributes = {}) {
+  const element = document.createElementNS(SVG_NS, name);
+  Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
+  return element;
+}
+
+function topicLabelLines(name) {
+  const words = name.split(/\s+/);
+  const lines = [];
+  words.forEach((word) => {
+    const last = lines[lines.length - 1];
+    if (!last || `${last} ${word}`.length > 18) lines.push(word);
+    else lines[lines.length - 1] = `${last} ${word}`;
+  });
+  return lines.slice(0, 3);
+}
+
+function graphFileButton(file, topic) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'topic-file';
+  const title = document.createElement('strong');
+  title.textContent = file.title;
+  const details = document.createElement('span');
+  const updated = file.updatedAt ? ` · ${new Date(file.updatedAt).toLocaleDateString()}` : '';
+  details.textContent = `${file.subtopic || file.kind} · ${file.chunks.toLocaleString()} passage${file.chunks === 1 ? '' : 's'}${updated}`;
+  button.append(title, details);
+  button.onclick = () => showKnowledgeDocument(file, topic);
+  return button;
+}
+
+function addSubtopicFilters(panel, topic, payload) {
+  const filters = document.createElement('div');
+  filters.className = 'subtopic-filters';
+  [{ name: 'All', count: payload.total }, ...(topic.subtopics || [])].forEach((subtopic) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.textContent = `${subtopic.name} ${subtopic.count}`;
+    chip.onclick = async () => {
+      filters.querySelectorAll('button').forEach((item) => item.classList.toggle('active', item === chip));
+      const chosen = subtopic.name === 'All' ? '' : subtopic.name;
+      const next = await api(`/api/knowledge-topic?topic=${encodeURIComponent(topic.name)}&subtopic=${encodeURIComponent(chosen)}`);
+      renderTopicFileList(panel, topic, next);
+    };
+    if (subtopic.name === 'All') chip.classList.add('active');
+    filters.appendChild(chip);
+  });
+  panel.appendChild(filters);
+}
+
+function renderTopicFileList(panel, topic, payload) {
+  panel.querySelector('.topic-file-list')?.remove();
+  panel.querySelector('.topic-limit-note')?.remove();
+  const list = document.createElement('div');
+  list.className = 'topic-file-list';
+  payload.files.forEach((file) => list.appendChild(graphFileButton(file, topic)));
+  if (!payload.files.length) list.innerHTML = '<div class="empty-topic compact"><strong>No matching files</strong><span>Choose another subtopic.</span></div>';
+  panel.appendChild(list);
+  if (payload.total > payload.files.length) {
+    const note = document.createElement('small');
+    note.className = 'topic-limit-note';
+    note.textContent = `Showing ${payload.files.length.toLocaleString()} of ${payload.total.toLocaleString()} indexed items.`;
+    panel.appendChild(note);
+  }
+}
+
+async function summarizeGraphItem(type, id, output, button) {
+  button.disabled = true;
+  button.textContent = 'Summarizing locally…';
+  try {
+    const result = await api('/api/knowledge-summary', { method: 'POST', body: JSON.stringify({ type, id }) });
+    output.textContent = result.summary;
+    output.hidden = false;
+    button.textContent = result.cached ? 'Refresh local summary' : 'Summary ready';
+  } catch (error) {
+    output.textContent = `Could not summarize: ${error.message}`;
+    output.hidden = false;
+    button.textContent = 'Try summary again';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function showTopicFiles(topic) {
+  document.querySelectorAll('.topic-node').forEach((node) => node.classList.toggle('selected', node.dataset.topic === topic.name));
+  const panel = $('topicFiles');
+  panel.innerHTML = `<div class="topic-file-heading"><div><span class="eyebrow">Selected topic</span><h3>${escapeHtml(topic.name)}</h3></div><strong>${topic.count.toLocaleString()}</strong></div><div class="topic-file-loading">Loading local files…</div>`;
+  try {
+    const payload = await api(`/api/knowledge-topic?topic=${encodeURIComponent(topic.name)}`);
+    panel.querySelector('.topic-file-loading').remove();
+    const actions = document.createElement('div');
+    actions.className = 'topic-actions';
+    const summarize = document.createElement('button');
+    summarize.textContent = topic.summary ? 'View local summary' : 'Summarize locally';
+    const summary = document.createElement('div');
+    summary.className = 'graph-summary';
+    summary.hidden = !topic.summary;
+    summary.textContent = topic.summary || '';
+    summarize.onclick = () => topic.summary && summary.hidden
+      ? (summary.hidden = false)
+      : summarizeGraphItem('topic', topic.name, summary, summarize);
+    actions.appendChild(summarize);
+    panel.append(actions, summary);
+    addSubtopicFilters(panel, topic, payload);
+    renderTopicFileList(panel, topic, payload);
+    state.graphExpandedTopic = topic;
+    state.graphExpandedFiles = payload.files.slice(0, 10);
+    renderKnowledgeGraph();
+  } catch (error) {
+    const loading = panel.querySelector('.topic-file-loading');
+    if (loading) loading.textContent = `Could not load files: ${error.message}`;
+  }
+}
+
+async function showKnowledgeDocument(file, topic) {
+  const panel = $('topicFiles');
+  panel.innerHTML = '<div class="topic-file-loading">Loading local content…</div>';
+  try {
+    const payload = await api(`/api/knowledge-document?id=${encodeURIComponent(file.id)}`);
+    panel.innerHTML = '';
+    const heading = document.createElement('div');
+    heading.className = 'conversation-view-heading';
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'conversation-back';
+    back.textContent = `‹ ${topic.name}`;
+    back.onclick = () => showTopicFiles(topic);
+    const titleBlock = document.createElement('div');
+    const title = document.createElement('h3');
+    title.textContent = payload.title === 'Unknown contact' ? file.title : payload.title;
+    const meta = document.createElement('span');
+    const updated = payload.updatedAt ? new Date(payload.updatedAt).toLocaleString() : 'Indexed source';
+    meta.textContent = `${payload.subtopic} · ${Math.round(payload.confidence * 100)}% source confidence · ${updated}`;
+    titleBlock.append(title, meta);
+    heading.append(back, titleBlock);
+    panel.appendChild(heading);
+
+    const actions = document.createElement('div');
+    actions.className = 'document-actions';
+    const summarize = document.createElement('button');
+    summarize.textContent = payload.summary ? 'View local summary' : 'Summarize locally';
+    actions.appendChild(summarize);
+    if (payload.path) {
+      const open = document.createElement('button');
+      open.textContent = 'Open source file';
+      open.onclick = () => window.brain.openPath(payload.path);
+      actions.appendChild(open);
+    }
+    panel.appendChild(actions);
+    const summary = document.createElement('div');
+    summary.className = 'graph-summary';
+    summary.hidden = !payload.summary;
+    summary.textContent = payload.summary || '';
+    panel.appendChild(summary);
+    summarize.onclick = () => payload.summary && summary.hidden
+      ? (summary.hidden = false)
+      : summarizeGraphItem('document', payload.id, summary, summarize);
+
+    if (payload.messages) renderConversationDocument(panel, payload, file, title);
+    else {
+      const preview = document.createElement('div');
+      preview.className = 'document-preview';
+      preview.textContent = payload.excerpt || 'No readable preview is available. Open the source file to view it.';
+      panel.appendChild(preview);
+    }
+    if (payload.related?.length) {
+      const related = document.createElement('section');
+      related.className = 'related-documents';
+      related.innerHTML = '<h4>Related local knowledge</h4>';
+      payload.related.forEach((item) => {
+        const button = graphFileButton(item, state.graphTopics.find((entry) => entry.name === item.topic) || { name: item.topic });
+        const reason = document.createElement('em');
+        reason.textContent = item.relationship || 'Related indexed content';
+        button.appendChild(reason);
+        related.appendChild(button);
+      });
+      panel.appendChild(related);
+    }
+  } catch (error) {
+    panel.innerHTML = `<div class="topic-file-loading">Could not display content: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderConversationDocument(panel, payload, file, title) {
+  const controls = document.createElement('div');
+  controls.className = 'conversation-controls conversation-filter-grid';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.placeholder = 'Search messages…';
+  const from = document.createElement('input'); from.type = 'date'; from.title = 'From date';
+  const to = document.createElement('input'); to.type = 'date'; to.title = 'To date';
+  controls.append(search, from, to);
+  if (payload.canRename) {
+    const rename = document.createElement('button');
+    rename.type = 'button'; rename.textContent = 'Rename'; controls.appendChild(rename);
+    rename.onclick = () => { renameEditor.hidden = !renameEditor.hidden; if (!renameEditor.hidden) nameInput.focus(); };
+  }
+  panel.appendChild(controls);
+  const renameEditor = document.createElement('div');
+  renameEditor.className = 'contact-rename-editor'; renameEditor.hidden = true;
+  const nameInput = document.createElement('input'); nameInput.placeholder = 'Person or group name';
+  const saveName = document.createElement('button'); saveName.type = 'button'; saveName.textContent = 'Save name';
+  renameEditor.append(nameInput, saveName); panel.appendChild(renameEditor);
+  saveName.onclick = async () => {
+    const name = nameInput.value.trim(); if (!name) return nameInput.focus();
+    saveName.disabled = true;
+    try {
+      await api('/api/contact-alias', { method: 'POST', body: JSON.stringify({ documentId: file.id, name }) });
+      file.title = name; title.textContent = name; renameEditor.hidden = true; await refreshKnowledgeGraph();
+    } catch (error) { nameInput.value = ''; nameInput.placeholder = error.message; }
+    finally { saveName.disabled = false; }
+  };
+  const count = document.createElement('small'); count.className = 'message-result-count'; panel.appendChild(count);
+  const messages = document.createElement('div'); messages.className = 'conversation-messages'; panel.appendChild(messages);
+  const renderMessages = () => {
+    const query = search.value.trim().toLocaleLowerCase();
+    const fromTime = from.value ? new Date(`${from.value}T00:00:00`).getTime() : -Infinity;
+    const toTime = to.value ? new Date(`${to.value}T23:59:59`).getTime() : Infinity;
+    const selected = payload.messages.filter((message) => {
+      const time = new Date(message.time).getTime();
+      return (!query || `${message.speaker} ${message.text}`.toLocaleLowerCase().includes(query)) && (Number.isNaN(time) || (time >= fromTime && time <= toTime));
+    });
+    count.textContent = `${selected.length.toLocaleString()} of ${payload.messages.length.toLocaleString()} recent messages`;
+    messages.innerHTML = '';
+    selected.forEach((message) => {
+      const row = document.createElement('article'); row.className = `conversation-message ${message.speaker === 'Vashisht' ? 'mine' : ''}`;
+      const speaker = document.createElement('strong'); speaker.textContent = message.speaker;
+      const text = document.createElement('p'); text.textContent = message.text;
+      const time = document.createElement('time'); const parsed = new Date(message.time);
+      time.textContent = Number.isNaN(parsed.getTime()) ? message.time : parsed.toLocaleString();
+      row.append(speaker, text, time); messages.appendChild(row);
+    });
+    if (!selected.length) messages.innerHTML = '<div class="empty-topic compact"><strong>No matching messages</strong><span>Change the text or date filters.</span></div>';
+  };
+  [search, from, to].forEach((input) => input.addEventListener('input', renderMessages));
+  renderMessages();
+}
+
+function applyGraphTransform() {
+  const viewport = $('graphViewport');
+  if (viewport) viewport.setAttribute('transform', `translate(${state.graphTransform.x} ${state.graphTransform.y}) scale(${state.graphTransform.scale})`);
+}
+
+function setGraphZoom(nextScale, anchor = { x: 450, y: 285 }) {
+  const old = state.graphTransform.scale;
+  const scale = Math.max(.55, Math.min(2.4, nextScale));
+  state.graphTransform.x = anchor.x - ((anchor.x - state.graphTransform.x) * scale / old);
+  state.graphTransform.y = anchor.y - ((anchor.y - state.graphTransform.y) * scale / old);
+  state.graphTransform.scale = scale;
+  applyGraphTransform();
+}
+
+function renderKnowledgeGraph() {
+  const svg = $('knowledgeGraph');
+  let viewport = $('graphViewport');
+  if (!viewport) {
+    svg.innerHTML = '';
+    viewport = svgElement('g', { id: 'graphViewport' });
+    svg.appendChild(viewport);
+  }
+  viewport.innerHTML = '';
+  const topics = state.graphTopics;
+  const center = { x: 450, y: 285 };
+  const colors = ['#a8ff78', '#65d4ff', '#c59bff', '#ffbd67', '#ff7f91', '#72e7cd', '#9eb5ff', '#f1db73', '#7fdbff', '#c3ff9a', '#ff9de2'];
+  const maxCount = Math.max(1, ...topics.map((topic) => topic.count));
+  const positions = topics.map((topic, index) => {
+    const ring = topics.length > 9 && index >= 7 ? 205 : 150;
+    const ringItems = topics.length > 9 && index >= 7 ? topics.length - 7 : Math.min(7, topics.length);
+    const ringIndex = topics.length > 9 && index >= 7 ? index - 7 : index;
+    const angle = -Math.PI / 2 + (Math.PI * 2 * ringIndex) / Math.max(1, ringItems);
+    return { topic, x: center.x + Math.cos(angle) * ring * 1.75, y: center.y + Math.sin(angle) * ring, color: colors[index % colors.length] };
+  });
+  const positionMap = new Map(positions.map((item) => [item.topic.name, item]));
+  positions.forEach((item) => viewport.appendChild(svgElement('line', { x1: center.x, y1: center.y, x2: item.x, y2: item.y, class: 'graph-edge' })));
+  const brain = svgElement('g', { class: 'brain-node' });
+  brain.appendChild(svgElement('circle', { cx: center.x, cy: center.y, r: 67 }));
+  const brainTitle = svgElement('text', { x: center.x, y: center.y - 4, 'text-anchor': 'middle' });
+  brainTitle.textContent = 'Vashisht';
+  const brainSub = svgElement('text', { x: center.x, y: center.y + 17, 'text-anchor': 'middle', class: 'node-count' });
+  brainSub.textContent = 'Second Brain';
+  brain.append(brainTitle, brainSub);
+  viewport.appendChild(brain);
+  positions.forEach((item) => {
+    const radius = 35 + Math.sqrt(item.topic.count / maxCount) * 25;
+    const group = svgElement('g', { class: 'topic-node', transform: `translate(${item.x} ${item.y})`, tabindex: '0', role: 'button', 'aria-label': `${item.topic.name}, ${item.topic.count} files` });
+    group.dataset.topic = item.topic.name;
+    group.style.setProperty('--node-color', item.color);
+    group.appendChild(svgElement('circle', { r: radius }));
+    const lines = topicLabelLines(item.topic.name);
+    lines.forEach((line, lineIndex) => {
+      const textNode = svgElement('text', { x: 0, y: (lineIndex - (lines.length - 1) / 2) * 13 - 5, 'text-anchor': 'middle' });
+      textNode.textContent = line;
+      group.appendChild(textNode);
+    });
+    const count = svgElement('text', { x: 0, y: radius - 12, 'text-anchor': 'middle', class: 'node-count' });
+    count.textContent = item.topic.count.toLocaleString();
+    group.appendChild(count);
+    group.onclick = () => showTopicFiles(item.topic);
+    group.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') showTopicFiles(item.topic); };
+    viewport.appendChild(group);
+  });
+  if (state.graphExpandedTopic && positionMap.has(state.graphExpandedTopic.name)) {
+    const origin = positionMap.get(state.graphExpandedTopic.name);
+    state.graphExpandedFiles.forEach((file, index) => {
+      const angle = -Math.PI / 2 + (Math.PI * 2 * index) / Math.max(1, state.graphExpandedFiles.length);
+      const distance = 105 + (index % 2) * 18;
+      const x = origin.x + Math.cos(angle) * distance;
+      const y = origin.y + Math.sin(angle) * distance;
+      viewport.appendChild(svgElement('line', { x1: origin.x, y1: origin.y, x2: x, y2: y, class: 'graph-edge document-edge' }));
+      const group = svgElement('g', { class: 'document-node', transform: `translate(${x} ${y})`, tabindex: '0', role: 'button', 'aria-label': file.title });
+      group.appendChild(svgElement('circle', { r: 22 }));
+      const label = svgElement('text', { x: 0, y: 35, 'text-anchor': 'middle' });
+      label.textContent = file.title.length > 20 ? `${file.title.slice(0, 18)}…` : file.title;
+      group.appendChild(label);
+      group.onclick = (event) => { event.stopPropagation(); showKnowledgeDocument(file, state.graphExpandedTopic); };
+      group.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') showKnowledgeDocument(file, state.graphExpandedTopic); };
+      viewport.appendChild(group);
+    });
+  }
+  applyGraphTransform();
+}
+
+async function refreshKnowledgeGraph() {
+  try {
+    const payload = await api('/api/knowledge-graph');
+    state.graphTopics = payload.topics || [];
+    renderKnowledgeGraph();
+    $('graphStatus').textContent = `${state.graphTopics.length} topics · ${payload.duplicatesMerged || 0} duplicate copies merged · entirely local`;
+  } catch (error) {
+    $('graphStatus').textContent = `Knowledge graph unavailable: ${error.message}`;
+  }
+}
+
+async function searchKnowledgeGraph() {
+  const query = $('graphSearch').value.trim();
+  if (!query) {
+    $('topicFiles').innerHTML = '<div class="empty-topic"><strong>Select a topic</strong><span>Its categorized files will appear here.</span></div>';
+    return;
+  }
+  const panel = $('topicFiles');
+  panel.innerHTML = '<div class="topic-file-loading">Searching your local index…</div>';
+  try {
+    const payload = await api(`/api/knowledge-search?q=${encodeURIComponent(query)}`);
+    panel.innerHTML = `<div class="topic-file-heading"><div><span class="eyebrow">Across all topics</span><h3>Results for “${escapeHtml(query)}”</h3></div><strong>${payload.results.length}</strong></div>`;
+    const list = document.createElement('div'); list.className = 'topic-file-list';
+    payload.results.forEach((file) => list.appendChild(graphFileButton(file, state.graphTopics.find((topic) => topic.name === file.topic) || { name: file.topic })));
+    if (!payload.results.length) list.innerHTML = '<div class="empty-topic compact"><strong>No local match</strong><span>Try a broader word.</span></div>';
+    panel.appendChild(list);
+  } catch (error) { panel.innerHTML = `<div class="topic-file-loading">Search failed: ${escapeHtml(error.message)}</div>`; }
+}
+
+function bindKnowledgeGraphControls() {
+  const svg = $('knowledgeGraph');
+  let searchTimer;
+  $('graphSearch').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(searchKnowledgeGraph, 220);
+  });
+  $('graphZoomIn').onclick = () => setGraphZoom(state.graphTransform.scale * 1.2);
+  $('graphZoomOut').onclick = () => setGraphZoom(state.graphTransform.scale / 1.2);
+  $('graphReset').onclick = () => { state.graphTransform = { x: 0, y: 0, scale: 1 }; state.graphExpandedTopic = null; state.graphExpandedFiles = []; renderKnowledgeGraph(); };
+  svg.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    setGraphZoom(state.graphTransform.scale * (event.deltaY < 0 ? 1.12 : .89), { x: (event.clientX - rect.left) * 900 / rect.width, y: (event.clientY - rect.top) * 570 / rect.height });
+  }, { passive: false });
+  svg.addEventListener('pointerdown', (event) => {
+    if (event.target.closest?.('.topic-node,.document-node')) return;
+    state.graphDrag = { x: event.clientX, y: event.clientY, startX: state.graphTransform.x, startY: state.graphTransform.y };
+    svg.setPointerCapture(event.pointerId); svg.classList.add('dragging');
+  });
+  svg.addEventListener('pointermove', (event) => {
+    if (!state.graphDrag) return;
+    const rect = svg.getBoundingClientRect();
+    state.graphTransform.x = state.graphDrag.startX + (event.clientX - state.graphDrag.x) * 900 / rect.width;
+    state.graphTransform.y = state.graphDrag.startY + (event.clientY - state.graphDrag.y) * 570 / rect.height;
+    applyGraphTransform();
+  });
+  const stop = () => { state.graphDrag = null; svg.classList.remove('dragging'); };
+  svg.addEventListener('pointerup', stop); svg.addEventListener('pointercancel', stop);
+}
+
+function renderLanguageQuestion() {
+  const available = state.languageQuestions.filter((item) => !item.answered && !state.skippedLanguageQuestions.has(item.id));
+  const answered = state.languageQuestions.filter((item) => item.answered).length;
+  const total = state.languageQuestions.length || 40;
+  $('languageProgress').textContent = `${answered}/${total}`;
+  $('languageProgressBar').style.width = `${Math.round((answered / total) * 100)}%`;
+  const question = available[0];
+  if (!question) {
+    $('languageCategory').textContent = answered === total ? 'Complete' : 'End of this pass';
+    $('languagePrompt').textContent = answered === total
+      ? 'You completed the Telugu-English grammar interview.'
+      : 'You skipped the remaining questions. Return to this page or restart the app to continue.';
+    $('languageAnswer').hidden = true;
+    $('saveLanguageAnswer').hidden = true;
+    $('skipLanguageAnswer').hidden = true;
+    return;
+  }
+  $('languageCategory').textContent = question.category;
+  $('languagePrompt').textContent = question.prompt;
+  $('languageAnswer').hidden = false;
+  $('languageAnswer').value = '';
+  $('saveLanguageAnswer').hidden = false;
+  $('skipLanguageAnswer').hidden = false;
+  $('languageNote').textContent = 'Write your real grammar and spelling. Do not include protected personal information.';
+}
+
+async function refreshLanguageInterview() {
+  const payload = await api('/api/language-questions');
+  state.languageQuestions = payload.questions || [];
+  renderLanguageQuestion();
+}
+
+async function saveLanguageAnswer() {
+  const question = state.languageQuestions.find((item) => !item.answered && !state.skippedLanguageQuestions.has(item.id));
+  const response = $('languageAnswer').value.trim();
+  if (!question || !response) return $('languageAnswer').focus();
+  $('saveLanguageAnswer').disabled = true;
+  $('languageNote').textContent = 'Learning your grammar locally…';
+  try {
+    await api('/api/language-sample', { method: 'POST', body: JSON.stringify({ questionId: question.id, response }) });
+    question.answered = true;
+    renderLanguageQuestion();
+    await refreshStatus();
+  } catch (error) {
+    $('languageNote').textContent = `Could not save: ${error.message}`;
+  } finally {
+    $('saveLanguageAnswer').disabled = false;
+  }
 }
 
 function bindSuggestions() {
@@ -471,8 +964,30 @@ elements.prompt.addEventListener('input', () => {
   elements.prompt.style.height = `${Math.min(elements.prompt.scrollHeight, 170)}px`;
 });
 $('newChat').onclick = newConversation;
-$('openBackupKit').onclick = () => addMessage('assistant', 'Backup tooling is intentionally excluded from the public repository.');
+$('openBackupKit').onclick = () => addMessage('assistant', 'Use the portable graph export for graph metadata. Keep full backup tooling outside the public repository.');
 $('openQuickChat').onclick = () => window.brain.openQuickWindow();
+$('exportGraphState').onclick = async () => {
+  const status = $('graphTransferStatus'); status.textContent = 'Preparing local export…';
+  try {
+    const result = await window.brain.exportGraphState();
+    status.textContent = result.canceled ? '' : `Saved to ${result.path}`;
+  } catch (error) { status.textContent = `Export failed: ${error.message}`; }
+};
+$('importGraphState').onclick = async () => {
+  const status = $('graphTransferStatus'); status.textContent = 'Merging local graph state…';
+  try {
+    const result = await window.brain.importGraphState();
+    if (result.canceled) return (status.textContent = '');
+    status.textContent = `Merged ${result.aliases} names and ${result.summaries} summaries.`;
+    await refreshKnowledgeGraph();
+  } catch (error) { status.textContent = `Import failed: ${error.message}`; }
+};
+$('saveLanguageAnswer').onclick = saveLanguageAnswer;
+$('skipLanguageAnswer').onclick = () => {
+  const question = state.languageQuestions.find((item) => !item.answered && !state.skippedLanguageQuestions.has(item.id));
+  if (question) state.skippedLanguageQuestions.add(question.id);
+  renderLanguageQuestion();
+};
 elements.private.onchange = updateTools;
 async function addFiles() {
   closePlusMenu();
@@ -513,8 +1028,9 @@ elements.audience.onchange = () => {
 
 async function initialize() {
   bindSuggestions();
+  bindKnowledgeGraphControls();
   updateTools();
-  await Promise.all([refreshStatus(), refreshConversations()]);
+  await Promise.all([refreshStatus(), refreshConversations(), refreshLanguageInterview(), refreshKnowledgeGraph()]);
   setInterval(refreshStatus, 30000);
 }
 

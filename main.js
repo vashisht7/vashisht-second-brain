@@ -19,6 +19,7 @@ let quickWindow = null;
 let mainWindow = null;
 let speechProcess = null;
 let fnKeyMonitor = null;
+let fnMonitorRestartTimer = null;
 let nativeShortcutDownAt = 0;
 let nativeShortcutHeld = false;
 let nativeHoldTimer = null;
@@ -51,6 +52,7 @@ function backendScript() {
 }
 
 function voiceTranscriberScript() {
+  if (app.isPackaged) return path.join(process.resourcesPath, 'transcribe_voice_command.py');
   return VOICE_TRANSCRIBER;
 }
 
@@ -60,6 +62,7 @@ function fnKeyMonitorExecutable() {
 }
 
 function ocrDocumentScript() {
+  if (app.isPackaged) return path.join(process.resourcesPath, 'ocr_document.swift');
   return OCR_DOCUMENT;
 }
 
@@ -451,6 +454,7 @@ function installQuickChatMenu() {
 }
 
 function startFnKeyMonitor() {
+  if (fnKeyMonitor || app.isQuitting) return;
   fnKeyMonitor = spawn(fnKeyMonitorExecutable(), [], { stdio: ['ignore', 'pipe', 'pipe'] });
   let buffered = '';
   fnKeyMonitor.stdout.on('data', (chunk) => {
@@ -460,9 +464,13 @@ function startFnKeyMonitor() {
     for (const line of lines) nativeShortcutSignal(line.trim());
   });
   fnKeyMonitor.stderr.on('data', (buffer) => console.error(`[fn-key] ${buffer}`));
+  fnKeyMonitor.on('error', (error) => console.error(`[fn-key] ${error}`));
   fnKeyMonitor.on('exit', (code) => {
     fnKeyMonitor = null;
-    if (code && !app.isQuitting) console.error(`Fn key listener exited with ${code}`);
+    if (!app.isQuitting) {
+      if (code) console.error(`Fn key listener exited with ${code}`);
+      fnMonitorRestartTimer = setTimeout(startFnKeyMonitor, 2000);
+    }
   });
 }
 
@@ -489,6 +497,24 @@ function createLoadingWindow() {
 }
 
 ipcMain.handle('local-api', (_, route, options) => localApi(route, options));
+ipcMain.handle('export-graph-state', async (event) => {
+  const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
+    title: 'Export portable knowledge graph state',
+    defaultPath: path.join(os.homedir(), 'Downloads', 'Vashisht-Knowledge-Graph.vashishtgraph'),
+    filters: [{ name: 'Vashisht Knowledge Graph', extensions: ['vashishtgraph'] }]
+  });
+  if (result.canceled || !result.filePath) return { canceled: true };
+  return localApi('/api/graph-export', { method: 'POST', body: JSON.stringify({ path: result.filePath }) });
+});
+ipcMain.handle('import-graph-state', async (event) => {
+  const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+    title: 'Import portable knowledge graph state',
+    properties: ['openFile'],
+    filters: [{ name: 'Vashisht Knowledge Graph', extensions: ['vashishtgraph'] }]
+  });
+  if (result.canceled || !result.filePaths[0]) return { canceled: true };
+  return localApi('/api/graph-import', { method: 'POST', body: JSON.stringify({ path: result.filePaths[0] }) });
+});
 ipcMain.handle('add-files', (event) => addFiles(BrowserWindow.fromWebContents(event.sender)));
 ipcMain.handle('add-images', (event) => addImages(BrowserWindow.fromWebContents(event.sender)));
 ipcMain.handle('request-microphone', requestMicrophone);
@@ -499,9 +525,13 @@ ipcMain.handle('stop-speaking', () => { if (speechProcess) speechProcess.kill('S
 ipcMain.handle('hide-quick-window', () => { quickWindow?.hide(); return true; });
 ipcMain.handle('open-quick-window', () => { toggleQuickWindow(); return true; });
 ipcMain.handle('open-path', (_, target) => {
-  const approvedRoot = DATA_ROOT;
+  const approvedRoots = [
+    path.resolve(DATA_ROOT),
+    path.join(os.homedir(), 'Desktop'),
+    path.join(os.homedir(), 'Downloads')
+  ];
   const resolved = path.resolve(String(target));
-  if (resolved !== approvedRoot && !resolved.startsWith(`${approvedRoot}${path.sep}`)) {
+  if (!approvedRoots.some((root) => resolved === root || resolved.startsWith(`${root}${path.sep}`))) {
     throw new Error('Source is outside the approved personal-data area');
   }
   return shell.openPath(resolved);
@@ -519,9 +549,12 @@ app.whenReady().then(async () => {
     callback(permission === 'media' && webContents.getURL().startsWith('file://')));
   await startMlxServer();
   await startBackend();
-  createWindow();
+  const backgroundLaunch = process.argv.includes('--background');
+  if (!backgroundLaunch) createWindow();
   createQuickWindow();
-  startFnKeyMonitor();
+  const shortcutRegistered = globalShortcut.register('Control+Shift+Space', toggleQuickWindow);
+  if (!shortcutRegistered) console.error('Control-Shift-Space could not be registered');
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true, args: ['--background'] });
   // The native listener supplies both key-down and key-up events. Registering
   // the same accelerator here would make one physical press toggle twice once
   // macOS Accessibility access is enabled.
@@ -545,6 +578,7 @@ app.on('before-quit', () => {
   if (imessageTimer) clearInterval(imessageTimer);
   if (speechProcess) speechProcess.kill('SIGTERM');
   if (fnKeyMonitor) fnKeyMonitor.kill('SIGTERM');
+  if (fnMonitorRestartTimer) clearTimeout(fnMonitorRestartTimer);
   if (nativeHoldTimer) clearTimeout(nativeHoldTimer);
   if (fallbackShortcut?.singleTimer) clearTimeout(fallbackShortcut.singleTimer);
   if (fallbackShortcut?.releaseTimer) clearTimeout(fallbackShortcut.releaseTimer);
