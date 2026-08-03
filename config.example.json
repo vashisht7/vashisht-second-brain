@@ -1,0 +1,27 @@
+{
+  "ollama_url": "http://127.0.0.1:11434",
+  "chat_model": "gemma4:e4b",
+  "embedding_model": "qwen3-embedding:0.6b",
+  "document_prefix": "",
+  "query_prefix": "Instruct: Retrieve relevant passages from a private personal archive. Match names, dates, messages, documents and source code.\nQuery: ",
+  "embedding_options": { "num_ctx": 2048 },
+  "index_path": "/Users/your-name/SecondBrainData/runtime/index/second_brain.sqlite",
+  "sources": [
+    "/Users/your-name/SecondBrainData/normalized",
+    "/Users/your-name/SecondBrainData/inbox",
+    "/Users/your-name/Desktop",
+    "/Users/your-name/Downloads"
+  ],
+  "excluded_path_terms": [
+    "/private/", "/node_modules/", "/venv/", "/.git/", "/build/", "/dist/"
+  ],
+  "excluded_name_terms": [
+    "passport", "i-94", "i-797", "h1b", "driver license", "tax return",
+    "bank statement", "credit card", "routing number", "account number", "medical", "secret"
+  ],
+  "excluded_content_terms": [
+    "passport", "i-94", "i-797", "h1b", "visa number", "driver license",
+    "social security", "tax return", "bank account", "credit card", "routing number",
+    "date of birth", "api key", "client secret", "private key", "access token", "password"
+  ]
+}

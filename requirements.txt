@@ -1,0 +1,3 @@
+mlx-whisper
+python-docx
+pypdf

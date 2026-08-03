@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'none'">
+  <title>Vashisht Devasani</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="drag-zone"></div>
+      <div class="brand">
+        <div class="brand-mark">VD</div>
+        <div><strong>Vashisht Devasani</strong><span>Second Brain 2.5.3</span></div>
+      </div>
+      <button class="new-chat" id="newChat"><span>＋</span> New conversation</button>
+      <nav class="nav">
+        <button class="nav-item active" data-view="chat"><span>⌁</span> Chats</button>
+        <button class="nav-item" data-view="knowledge"><span>◫</span> Knowledge</button>
+        <button class="nav-item" data-view="training"><span>◇</span> Training</button>
+        <button class="nav-item" data-view="settings"><span>⚙</span> Settings</button>
+      </nav>
+      <div class="section-label">Recent</div>
+      <div id="conversationList" class="conversation-list"></div>
+      <div class="sidebar-footer">
+        <span class="status-dot" id="statusDot"></span>
+        <div><strong id="modelLabel">Connecting…</strong><span>Runs locally on this Mac</span></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section id="chatView" class="view active-view">
+        <header class="topbar">
+          <div>
+            <h1 id="chatTitle">New conversation</h1>
+            <p id="modeDescription">Your private, source-grounded assistant</p>
+          </div>
+          <div class="audience-picker">
+            <label for="audience">Conversation</label>
+            <select id="audience">
+              <option value="self">Just me</option>
+              <option value="partner">With a partner</option>
+              <option value="friend">With a friend</option>
+            </select>
+          </div>
+        </header>
+
+        <div class="tool-strip">
+          <div class="tool automatic context"><span class="tool-icon">⌁</span><span><b>Automatic context</b><small>Model · files · web</small></span></div>
+          <div class="tool vault automatic"><span class="tool-icon">⌾</span><span><b>Private facts</b><small>Automatic · Just me</small></span></div>
+          <label class="tool"><input type="checkbox" id="privateToggle"><span class="tool-icon">◌</span><span><b>Private chat</b><small>Not saved</small></span></label>
+        </div>
+
+        <div class="messages" id="messages">
+          <div class="welcome" id="welcome">
+            <div class="orb"><span></span></div>
+            <h2>Your memory, available locally.</h2>
+            <p>Ask about your documents, projects, conversations or writing. Every personal answer can point back to its source.</p>
+            <div class="suggestions">
+              <button>What projects have I worked on?</button>
+              <button>Summarize my writing style.</button>
+              <button>What did I build in StudyBuddy?</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="permission-note" id="permissionNote"></div>
+          <div class="attachment-strip" id="attachmentStrip"></div>
+          <form class="composer" id="composer">
+            <textarea id="prompt" rows="1" placeholder="Ask your second brain…" autocomplete="off"></textarea>
+            <div class="composer-bottom">
+              <div class="composer-tools">
+                <button type="button" class="plus-button" id="plusButton" aria-label="Add or choose a tool" aria-expanded="false">＋</button>
+                <div class="plus-menu" id="plusMenu" hidden>
+                  <button type="button" data-plus-action="remember"><span>◆</span><b>Remember</b><small>Save a local fact</small></button>
+                  <button type="button" data-plus-action="train"><span>◇</span><b>Train</b><small>Queue a style example</small></button>
+                  <button type="button" data-plus-action="think"><span>✦</span><b>Think</b><small>Use deeper reasoning</small></button>
+                  <button type="button" data-plus-action="image"><span>▧</span><b>Add image</b><small>Read text locally</small></button>
+                  <button type="button" data-plus-action="file"><span>＋</span><b>Add file</b><small>Index a document</small></button>
+                </div>
+                <span class="mode-chip" id="modeChip" hidden></span>
+                <span id="activeTools">My knowledge</span>
+              </div>
+              <div class="composer-actions">
+                <button type="button" class="voice-button" id="voiceButton" aria-label="Ask by voice" title="Dictate a question"><span class="voice-glyph" aria-hidden="true"></span></button>
+                <button type="submit" id="sendButton" aria-label="Send">↑</button>
+              </div>
+            </div>
+          </form>
+          <p class="privacy-line">Local by default · Protected questions route automatically and are audited</p>
+        </div>
+      </section>
+
+      <section id="knowledgeView" class="view panel-view">
+        <header class="topbar"><div><h1>Knowledge</h1><p>What your second brain can currently retrieve</p></div></header>
+        <div class="dashboard" id="knowledgeDashboard"></div>
+      </section>
+
+      <section id="trainingView" class="view panel-view">
+        <header class="topbar"><div><h1>Training</h1><p>Style adapter and evaluation status</p></div></header>
+        <div class="dashboard" id="trainingDashboard"></div>
+      </section>
+
+      <section id="settingsView" class="view panel-view">
+        <header class="topbar"><div><h1>Settings</h1><p>Privacy and local runtime</p></div></header>
+        <div class="dashboard">
+          <article class="card wide"><div class="card-icon">⌾</div><div><h3>Protected information</h3><p>In “Just me,” questions about identifiers and immigration facts route automatically to the encrypted vault. Those facts are never embedded, trained on, or sent to web search, and identifiers remain redacted unless you explicitly request the full value.</p></div></article>
+          <article class="card wide"><div class="card-icon">＋</div><div><h3>Plus menu</h3><p>The composer’s plus button contains Remember, Train, Think, Add image, and Add file. Files enter the managed index; images are read locally and their text is attached and indexed. Protected-looking content is rejected from ordinary memory and training.</p><button class="primary" id="addFilesSettings">Add files</button></div></article>
+          <article class="card wide"><div class="card-icon">◎</div><div><h3>Automatic routing</h3><p>The app chooses the local model, your laptop knowledge, the live web, or both. Personal questions stay local; current information and version-sensitive coding use web evidence; ordinary coding runs directly on Gemma. Protected questions always remain in the encrypted vault.</p></div></article>
+          <article class="card wide"><div class="card-icon">●</div><div><h3>Local voice dictation</h3><p>Tap the microphone, speak naturally in English or Telugu, then tap the stop square. Stop immediately turns off the microphone and counter before local MLX Whisper transcription begins. Temporary audio is deleted afterward.</p></div></article>
+          <article class="card wide"><div class="card-icon">⌥</div><div><h3>Jarvis Quick Chat</h3><p>Tap Option-Space to open or hide chat. Hold Option-Space to listen, speak naturally, then release to transcribe, answer from your personal context, and speak the response.</p><button class="primary" id="openQuickChat">Open Quick Chat</button></div></article>
+          <article class="card wide"><div class="card-icon">◇</div><div><h3>Three-layer intelligence</h3><p>Gemma supplies general reasoning and language ability, your LoRA adapter shapes communication style, and local plus live retrieval supplies personal and current factual knowledge. Sources remain separate so they can update without retraining the model.</p></div></article>
+          <article class="card wide"><div class="card-icon">◌</div><div><h3>Private chat</h3><p>Messages in a private chat are kept only in memory for the current request and are not written to conversation history.</p></div></article>
+          <article class="card wide"><div class="card-icon">↥</div><div><h3>Backup and migration</h3><p>Create an encrypted portable backup before changing Macs or uploading to private cloud storage. Model downloads and development caches are reinstalled separately.</p><button class="primary" id="openBackupKit">Open migration kit</button></div></article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

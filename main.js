@@ -1,0 +1,556 @@
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, MenuItem, session, shell, systemPreferences } = require('electron');
+const { spawn } = require('node:child_process');
+const crypto = require('node:crypto');
+const fsSync = require('node:fs');
+const fs = require('node:fs/promises');
+const net = require('node:net');
+const os = require('node:os');
+const path = require('node:path');
+
+let backend = null;
+let mlxServer = null;
+let loadingWindow = null;
+let backendPort = null;
+let mlxPort = null;
+let reindexProcess = null;
+let imessageRefresh = null;
+let imessageTimer = null;
+let quickWindow = null;
+let mainWindow = null;
+let speechProcess = null;
+let fnKeyMonitor = null;
+let nativeShortcutDownAt = 0;
+let nativeShortcutHeld = false;
+let nativeHoldTimer = null;
+let fallbackShortcut = null;
+let lastNativeShortcutAt = 0;
+const backendToken = crypto.randomBytes(32).toString('hex');
+
+const DATA_ROOT = process.env.SECOND_BRAIN_DATA_ROOT || path.join(os.homedir(), 'SecondBrainData');
+const RUNTIME_TOOLS = app.isPackaged ? path.join(process.resourcesPath, 'tools') : path.join(__dirname, 'tools');
+const MLX_SERVER = process.env.MLX_LM_SERVER || 'mlx_lm.server';
+const MLX_MODEL = process.env.MLX_MODEL || 'mlx-community/gemma-4-e4b-it-4bit';
+const MLX_ADAPTER = process.env.MLX_ADAPTER_PATH || '';
+const MANAGED_INBOX = path.join(DATA_ROOT, 'inbox');
+const SECOND_BRAIN = path.join(RUNTIME_TOOLS, 'second_brain.py');
+const IMESSAGE_NORMALIZER = path.join(RUNTIME_TOOLS, 'normalize_imessage.py');
+const VOICE_PYTHON = process.env.MLX_WHISPER_PYTHON || 'python3';
+const VOICE_TRANSCRIBER = path.join(RUNTIME_TOOLS, 'transcribe_voice_command.py');
+const OCR_DOCUMENT = path.join(RUNTIME_TOOLS, 'ocr_document.swift');
+const MAX_VOICE_BYTES = 25 * 1024 * 1024;
+const SUPPORTED_FILE_TYPES = new Set([
+  '.txt', '.md', '.markdown', '.pdf', '.docx', '.csv', '.json', '.jsonl', '.xml', '.html', '.htm',
+  '.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.kt', '.dart', '.swift', '.c', '.cc', '.cpp', '.h',
+  '.hpp', '.cs', '.go', '.rs', '.sql', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.css', '.ipynb'
+]);
+const SUPPORTED_IMAGE_TYPES = new Set(['.png', '.jpg', '.jpeg', '.heic']);
+
+function backendScript() {
+  if (app.isPackaged) return path.join(process.resourcesPath, 'backend', 'server.py');
+  return path.join(__dirname, 'backend', 'server.py');
+}
+
+function voiceTranscriberScript() {
+  return VOICE_TRANSCRIBER;
+}
+
+function fnKeyMonitorExecutable() {
+  if (app.isPackaged) return path.join(process.resourcesPath, 'native', 'fn_key_monitor');
+  return path.join(__dirname, 'native', 'fn_key_monitor');
+}
+
+function ocrDocumentScript() {
+  return OCR_DOCUMENT;
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.on('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const port = probe.address().port;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+async function startMlxServer() {
+  mlxPort = await freePort();
+  const modelArguments = [
+    '--model', MLX_MODEL,
+    '--host', '127.0.0.1',
+    '--port', String(mlxPort),
+    '--temp', '0.7',
+    '--max-tokens', '700',
+    '--chat-template-args', '{"enable_thinking":false}',
+    '--log-level', 'WARNING'
+  ];
+  if (MLX_ADAPTER && fsSync.existsSync(MLX_ADAPTER)) modelArguments.splice(2, 0, '--adapter-path', MLX_ADAPTER);
+  mlxServer = spawn(MLX_SERVER, modelArguments, { stdio: ['ignore', 'pipe', 'pipe'] });
+  mlxServer.stderr.on('data', (buffer) => console.error(`[mlx-model] ${buffer}`));
+  mlxServer.on('exit', (code) => {
+    if (code && !app.isQuitting) console.error(`MLX model exited with ${code}`);
+    mlxPort = null;
+  });
+
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    if (mlxServer.exitCode !== null) throw new Error('Trained MLX model could not start');
+    try {
+      const response = await fetch(`http://127.0.0.1:${mlxPort}/v1/models`);
+      if (response.ok) return;
+    } catch (_) {
+      // The local model is still loading.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error('Trained MLX model took too long to start');
+}
+
+function startBackend() {
+  return new Promise((resolve, reject) => {
+    backend = spawn('/usr/bin/python3', [backendScript()], {
+      env: {
+        ...process.env,
+        VASHISHT_APP_TOKEN: backendToken,
+        VASHISHT_MLX_URL: `http://127.0.0.1:${mlxPort}`,
+        VASHISHT_MLX_MODEL: MLX_MODEL,
+        VASHISHT_MODEL_NAME: 'Vashisht_Devasani_Brain',
+        PYTHONUNBUFFERED: '1'
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const timeout = setTimeout(() => reject(new Error('Local backend did not start')), 15000);
+    backend.stdout.on('data', (buffer) => {
+      const message = buffer.toString();
+      const match = message.match(/READY\s+(\d+)/);
+      if (match) {
+        clearTimeout(timeout);
+        backendPort = Number(match[1]);
+        resolve();
+      }
+    });
+    backend.stderr.on('data', (buffer) => console.error(`[local-backend] ${buffer}`));
+    backend.on('exit', (code) => {
+      backendPort = null;
+      if (code && !app.isQuitting) console.error(`Local backend exited with ${code}`);
+    });
+  });
+}
+
+async function localApi(route, options = {}) {
+  if (!backendPort) throw new Error('Local backend is unavailable');
+  const response = await fetch(`http://127.0.0.1:${backendPort}${route}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Vashisht-Token': backendToken,
+      ...(options.headers || {})
+    }
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+  return payload;
+}
+
+function startReindex() {
+  if (reindexProcess) return;
+  reindexProcess = spawn(SECOND_BRAIN, ['scan'], { stdio: 'ignore' });
+  reindexProcess.on('exit', () => { reindexProcess = null; });
+}
+
+function refreshMessages() {
+  if (imessageRefresh) return;
+  imessageRefresh = spawn('/usr/bin/python3', [IMESSAGE_NORMALIZER], { stdio: ['ignore', 'pipe', 'pipe'] });
+  imessageRefresh.stderr.on('data', (buffer) => console.error(`[messages-refresh] ${buffer}`));
+  imessageRefresh.on('exit', () => { imessageRefresh = null; });
+}
+
+async function requestMicrophone() {
+  if (process.platform !== 'darwin') return true;
+  const status = systemPreferences.getMediaAccessStatus('microphone');
+  if (status === 'granted') return true;
+  if (status === 'denied' || status === 'restricted') return false;
+  return systemPreferences.askForMediaAccess('microphone');
+}
+
+function runVoiceTranscriber(audioPath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(VOICE_PYTHON, [voiceTranscriberScript(), audioPath], {
+      env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || '/usr/bin:/bin'}` },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error('Local voice transcription took too long'));
+    }, 180000);
+    child.stdout.on('data', (buffer) => { if (stdout.length < 1024 * 1024) stdout += buffer; });
+    child.stderr.on('data', (buffer) => { if (stderr.length < 1024 * 1024) stderr += buffer; });
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on('exit', (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) return reject(new Error(stderr.trim() || 'Local transcription failed'));
+      try {
+        const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+        resolve(JSON.parse(lines[lines.length - 1] || '{}'));
+      } catch (_) {
+        reject(new Error('Local transcription returned an invalid result'));
+      }
+    });
+  });
+}
+
+async function transcribeAudio(payload) {
+  const allowedTypes = new Map([
+    ['audio/webm', '.webm'], ['audio/webm;codecs=opus', '.webm'],
+    ['audio/mp4', '.m4a'], ['audio/ogg', '.ogg'], ['audio/wav', '.wav']
+  ]);
+  const mimeType = String(payload?.mimeType || 'audio/webm').toLowerCase();
+  const extension = allowedTypes.get(mimeType) || (mimeType.startsWith('audio/webm') ? '.webm' : null);
+  if (!extension) throw new Error('Unsupported microphone recording format');
+  const audio = Buffer.from(payload?.bytes || []);
+  if (!audio.length) throw new Error('The microphone recording was empty');
+  if (audio.length > MAX_VOICE_BYTES) throw new Error('Voice commands are limited to 25 MB');
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'vashisht-voice-'));
+  const audioPath = path.join(temporaryDirectory, `command${extension}`);
+  try {
+    await fs.writeFile(audioPath, audio, { mode: 0o600 });
+    const result = await runVoiceTranscriber(audioPath);
+    if (!result.text) throw new Error('I could not hear clear speech. Please try again and speak naturally after the microphone turns red.');
+    return result;
+  } finally {
+    await fs.rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+async function addFiles(window) {
+  const selection = await dialog.showOpenDialog(window, {
+    title: 'Add files to Vashisht Devasani',
+    buttonLabel: 'Add to Second Brain',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Documents and text', extensions: [...SUPPORTED_FILE_TYPES].map((value) => value.slice(1)) },
+      { name: 'All files', extensions: ['*'] }
+    ]
+  });
+  if (selection.canceled) return { canceled: true, added: [] };
+  await fs.mkdir(MANAGED_INBOX, { recursive: true, mode: 0o700 });
+  const added = [];
+  const rejected = [];
+  for (const source of selection.filePaths) {
+    const extension = path.extname(source).toLowerCase();
+    if (!SUPPORTED_FILE_TYPES.has(extension)) {
+      rejected.push(path.basename(source));
+      continue;
+    }
+    const safeName = path.basename(source).replace(/[^a-zA-Z0-9._ -]/g, '_');
+    const uniqueName = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeName}`;
+    const destination = path.join(MANAGED_INBOX, uniqueName);
+    await fs.copyFile(source, destination);
+    added.push({ name: path.basename(source), path: destination });
+  }
+  if (added.length) startReindex();
+  return { canceled: false, added, rejected, inbox: MANAGED_INBOX };
+}
+
+function runImageOcr(imagePath) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('/usr/bin/swift', [ocrDocumentScript(), imagePath], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('Local image reading took too long')); }, 120000);
+    child.stdout.on('data', (buffer) => { if (stdout.length < 2 * 1024 * 1024) stdout += buffer; });
+    child.stderr.on('data', (buffer) => { if (stderr.length < 64 * 1024) stderr += buffer; });
+    child.on('error', (error) => { clearTimeout(timeout); reject(error); });
+    child.on('exit', (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) return reject(new Error(stderr.trim() || 'Local image reading failed'));
+      resolve(stdout.trim());
+    });
+  });
+}
+
+function imageTextLooksProtected(text) {
+  return /\b(passport|visa|i-?94|i-?797|h-?1b|social security|ssn|driver(?:'s)? license|taxpayer|form 1040|w-?2)\b/i.test(text)
+    || /\b\d{3}[- ]?\d{2}[- ]?\d{4}\b/.test(text);
+}
+
+async function addImages(window) {
+  const selection = await dialog.showOpenDialog(window, {
+    title: 'Add images to Vashisht Devasani',
+    buttonLabel: 'Read and add images',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Images', extensions: [...SUPPORTED_IMAGE_TYPES].map((value) => value.slice(1)) }]
+  });
+  if (selection.canceled) return { canceled: true, added: [], rejected: [] };
+  const imageInbox = path.join(MANAGED_INBOX, 'images');
+  await fs.mkdir(imageInbox, { recursive: true, mode: 0o700 });
+  const added = [];
+  const rejected = [];
+  for (const source of selection.filePaths.slice(0, 4)) {
+    const extension = path.extname(source).toLowerCase();
+    if (!SUPPORTED_IMAGE_TYPES.has(extension)) { rejected.push({ name: path.basename(source), reason: 'unsupported format' }); continue; }
+    const text = await runImageOcr(source);
+    if (!text) { rejected.push({ name: path.basename(source), reason: 'no readable text detected' }); continue; }
+    if (imageTextLooksProtected(text)) { rejected.push({ name: path.basename(source), reason: 'protected content must use the encrypted vault' }); continue; }
+    const safeStem = path.basename(source, extension).replace(/[^a-zA-Z0-9._ -]/g, '_');
+    const unique = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeStem}`;
+    const destination = path.join(imageInbox, `${unique}${extension}`);
+    const sidecar = path.join(imageInbox, `${unique}.md`);
+    await fs.copyFile(source, destination);
+    await fs.writeFile(sidecar, `# Image text: ${path.basename(source)}\n\n${text}\n`, { mode: 0o600 });
+    added.push({ name: path.basename(source), path: destination, text: text.slice(0, 12000) });
+  }
+  if (added.length) startReindex();
+  return { canceled: false, added, rejected };
+}
+
+function createWindow() {
+  const window = new BrowserWindow({
+    width: 1420,
+    height: 920,
+    minWidth: 980,
+    minHeight: 680,
+    title: 'Vashisht Devasani',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 18, y: 18 },
+    backgroundColor: '#0b0d10',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  mainWindow = window;
+  window.on('closed', () => { mainWindow = null; });
+  window.webContents.on('did-fail-load', (_, code, description) => console.error(`[main-window] ${code}: ${description}`));
+  window.loadFile(path.join(__dirname, 'renderer', 'index.html')).then(() => {
+    if (!window.isDestroyed()) { window.show(); window.focus(); }
+  }).catch((error) => console.error(`[main-window] ${error}`));
+  return window;
+}
+
+function createQuickWindow() {
+  if (quickWindow && !quickWindow.isDestroyed()) return quickWindow;
+  quickWindow = new BrowserWindow({
+    width: 620,
+    height: 460,
+    minWidth: 520,
+    minHeight: 280,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  quickWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  quickWindow.on('closed', () => { quickWindow = null; });
+  quickWindow.webContents.on('did-fail-load', (_, code, description) => console.error(`[quick-window] ${code}: ${description}`));
+  quickWindow.loadFile(path.join(__dirname, 'renderer', 'quick.html')).catch((error) => console.error(`[quick-window] ${error}`));
+  return quickWindow;
+}
+
+function toggleQuickWindow() {
+  const window = createQuickWindow();
+  if (window.isVisible()) return window.hide();
+  const display = require('electron').screen.getDisplayNearestPoint(require('electron').screen.getCursorScreenPoint());
+  const bounds = window.getBounds();
+  window.setPosition(
+    Math.round(display.workArea.x + (display.workArea.width - bounds.width) / 2),
+    Math.round(display.workArea.y + Math.max(45, display.workArea.height * 0.14))
+  );
+  window.show();
+  window.focus();
+  window.webContents.send('quick-focus');
+}
+
+function showQuickWindow() {
+  const window = createQuickWindow();
+  if (!window.isVisible()) toggleQuickWindow();
+  else { window.show(); window.focus(); }
+  return window;
+}
+
+function beginQuickVoice() {
+  nativeShortcutHeld = true;
+  const window = showQuickWindow();
+  window.webContents.send('quick-voice-start');
+}
+
+function finishQuickVoice() {
+  if (!nativeShortcutHeld) return;
+  nativeShortcutHeld = false;
+  quickWindow?.webContents.send('quick-voice-stop');
+}
+
+function nativeShortcutSignal(signal) {
+  lastNativeShortcutAt = Date.now();
+  if (signal === 'HOTKEY_DOWN' && !nativeShortcutDownAt) {
+    if (fallbackShortcut?.singleTimer) clearTimeout(fallbackShortcut.singleTimer);
+    if (fallbackShortcut?.releaseTimer) clearTimeout(fallbackShortcut.releaseTimer);
+    fallbackShortcut = null;
+    nativeShortcutDownAt = Date.now();
+    nativeHoldTimer = setTimeout(beginQuickVoice, 360);
+  } else if (signal === 'HOTKEY_UP' && nativeShortcutDownAt) {
+    if (nativeHoldTimer) clearTimeout(nativeHoldTimer);
+    nativeHoldTimer = null;
+    const wasHeld = nativeShortcutHeld;
+    nativeShortcutDownAt = 0;
+    if (wasHeld) finishQuickVoice();
+    else toggleQuickWindow();
+  }
+}
+
+function fallbackShortcutSignal() {
+  if (nativeShortcutDownAt || Date.now() - lastNativeShortcutAt < 250) return;
+  const stamp = Date.now();
+  if (!fallbackShortcut || stamp - fallbackShortcut.lastSignal > 700) {
+    fallbackShortcut = { count: 1, lastSignal: stamp, singleTimer: null, releaseTimer: null };
+    fallbackShortcut.singleTimer = setTimeout(() => {
+      if (fallbackShortcut?.count === 1) toggleQuickWindow();
+      fallbackShortcut = null;
+    }, 620);
+    return;
+  }
+  fallbackShortcut.count += 1;
+  fallbackShortcut.lastSignal = stamp;
+  if (fallbackShortcut.count === 2) {
+    clearTimeout(fallbackShortcut.singleTimer);
+    fallbackShortcut.singleTimer = null;
+    beginQuickVoice();
+  }
+  if (fallbackShortcut.releaseTimer) clearTimeout(fallbackShortcut.releaseTimer);
+  fallbackShortcut.releaseTimer = setTimeout(() => {
+    finishQuickVoice();
+    fallbackShortcut = null;
+  }, 190);
+}
+
+function installQuickChatMenu() {
+  const menu = Menu.getApplicationMenu();
+  const applicationMenu = menu?.items?.[0]?.submenu;
+  if (!applicationMenu || applicationMenu.items.some((item) => item.id === 'quick-chat')) return;
+  applicationMenu.insert(1, new MenuItem({ id: 'quick-chat', label: 'Open Quick Chat', click: toggleQuickWindow }));
+}
+
+function startFnKeyMonitor() {
+  fnKeyMonitor = spawn(fnKeyMonitorExecutable(), [], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let buffered = '';
+  fnKeyMonitor.stdout.on('data', (chunk) => {
+    buffered += chunk.toString();
+    const lines = buffered.split(/\r?\n/);
+    buffered = lines.pop() || '';
+    for (const line of lines) nativeShortcutSignal(line.trim());
+  });
+  fnKeyMonitor.stderr.on('data', (buffer) => console.error(`[fn-key] ${buffer}`));
+  fnKeyMonitor.on('exit', (code) => {
+    fnKeyMonitor = null;
+    if (code && !app.isQuitting) console.error(`Fn key listener exited with ${code}`);
+  });
+}
+
+function speakText(text) {
+  if (speechProcess) speechProcess.kill('SIGTERM');
+  const spoken = String(text || '').replace(/\[[IPMVW]\d+\]/g, '').slice(0, 12000).trim();
+  if (!spoken) return false;
+  speechProcess = spawn('/usr/bin/say', ['-r', '195', spoken], { stdio: 'ignore' });
+  speechProcess.on('exit', () => { speechProcess = null; });
+  return true;
+}
+
+function createLoadingWindow() {
+  loadingWindow = new BrowserWindow({
+    width: 460,
+    height: 310,
+    resizable: false,
+    title: 'Vashisht Devasani',
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#0b0d10',
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
+  loadingWindow.loadFile(path.join(__dirname, 'renderer', 'loading.html'));
+}
+
+ipcMain.handle('local-api', (_, route, options) => localApi(route, options));
+ipcMain.handle('add-files', (event) => addFiles(BrowserWindow.fromWebContents(event.sender)));
+ipcMain.handle('add-images', (event) => addImages(BrowserWindow.fromWebContents(event.sender)));
+ipcMain.handle('request-microphone', requestMicrophone);
+ipcMain.handle('transcribe-audio', (_, payload) => transcribeAudio(payload));
+ipcMain.handle('copy-text', (_, value) => { clipboard.writeText(String(value || '')); return true; });
+ipcMain.handle('speak-text', (_, value) => speakText(value));
+ipcMain.handle('stop-speaking', () => { if (speechProcess) speechProcess.kill('SIGTERM'); speechProcess = null; return true; });
+ipcMain.handle('hide-quick-window', () => { quickWindow?.hide(); return true; });
+ipcMain.handle('open-quick-window', () => { toggleQuickWindow(); return true; });
+ipcMain.handle('open-path', (_, target) => {
+  const approvedRoot = DATA_ROOT;
+  const resolved = path.resolve(String(target));
+  if (resolved !== approvedRoot && !resolved.startsWith(`${approvedRoot}${path.sep}`)) {
+    throw new Error('Source is outside the approved personal-data area');
+  }
+  return shell.openPath(resolved);
+});
+ipcMain.handle('open-external', (_, target) => {
+  const parsed = new URL(target);
+  if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error('Unsupported URL');
+  return shell.openExternal(target);
+});
+
+app.whenReady().then(async () => {
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) =>
+    permission === 'media' && webContents.getURL().startsWith('file://'));
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) =>
+    callback(permission === 'media' && webContents.getURL().startsWith('file://')));
+  await startMlxServer();
+  await startBackend();
+  createWindow();
+  createQuickWindow();
+  startFnKeyMonitor();
+  // The native listener supplies both key-down and key-up events. Registering
+  // the same accelerator here would make one physical press toggle twice once
+  // macOS Accessibility access is enabled.
+  installQuickChatMenu();
+  refreshMessages();
+  imessageTimer = setInterval(refreshMessages, 5 * 60 * 1000);
+  app.on('activate', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    else { mainWindow.show(); mainWindow.focus(); }
+  });
+}).catch((error) => {
+  console.error(error);
+  app.quit();
+});
+
+app.on('before-quit', () => {
+  app.isQuitting = true;
+  if (backend) backend.kill('SIGTERM');
+  if (mlxServer) mlxServer.kill('SIGTERM');
+  if (imessageRefresh) imessageRefresh.kill('SIGTERM');
+  if (imessageTimer) clearInterval(imessageTimer);
+  if (speechProcess) speechProcess.kill('SIGTERM');
+  if (fnKeyMonitor) fnKeyMonitor.kill('SIGTERM');
+  if (nativeHoldTimer) clearTimeout(nativeHoldTimer);
+  if (fallbackShortcut?.singleTimer) clearTimeout(fallbackShortcut.singleTimer);
+  if (fallbackShortcut?.releaseTimer) clearTimeout(fallbackShortcut.releaseTimer);
+  globalShortcut.unregisterAll();
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});

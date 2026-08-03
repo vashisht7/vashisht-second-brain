@@ -1,0 +1,45 @@
+# Dependencies and build artifacts
+node_modules/
+out/
+dist/
+native/fn_key_monitor
+*.app
+*.dmg
+*.zip
+
+# Python and macOS artifacts
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+venv/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+config.json
+*.key
+*.pem
+*.p12
+
+# Personal data, indexes, models and runtime state
+SecondBrainData/
+PersonalAIData/
+data/
+inbox/
+private/
+models/
+normalized/
+raw/
+runtime/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.jsonl
+*.gguf
+*.safetensors
+*.npz
+*.bin
+*.log

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'">
+  <title>Ask Vashisht Devasani</title>
+  <link rel="stylesheet" href="quick.css">
+</head>
+<body>
+  <main class="quick-shell">
+    <header>
+      <div class="mark">VD</div>
+      <div><strong>Vashisht Devasani</strong><span id="status">Ask by voice or type</span></div>
+      <button class="icon quiet" id="newChat" title="New conversation">↻</button>
+      <button class="icon quiet" id="close" title="Close">×</button>
+    </header>
+    <section class="answer" id="answer" hidden>
+      <div class="answer-text" id="answerText"></div>
+      <div class="answer-actions">
+        <button id="copy">Copy</button>
+        <button id="speak">Speak again</button>
+        <button id="stopSpeech">Stop audio</button>
+      </div>
+    </section>
+    <form id="composer">
+      <textarea id="prompt" rows="2" placeholder="Ask anything…" autofocus></textarea>
+      <div class="actions">
+        <span id="contextLabel">Context stays in this conversation</span>
+        <button type="button" class="mic" id="mic" aria-label="Start voice question"><span></span></button>
+        <button type="submit" class="send" id="send" aria-label="Send">↑</button>
+      </div>
+    </form>
+    <footer>Tap ⌥ Space for chat · hold to talk, release to ask</footer>
+  </main>
+  <script src="quick.js"></script>
+</body>
+</html>
