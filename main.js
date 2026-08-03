@@ -158,9 +158,27 @@ async function localApi(route, options = {}) {
 }
 
 function startReindex() {
-  if (reindexProcess) return;
-  reindexProcess = spawn(SECOND_BRAIN, ['scan'], { stdio: 'ignore' });
-  reindexProcess.on('exit', () => { reindexProcess = null; });
+  if (reindexProcess) return Promise.resolve({ started: false, state: 'already_running', message: 'The local indexer is already running.' });
+  return new Promise((resolve, reject) => {
+    reindexProcess = spawn(SECOND_BRAIN, ['scan'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    reindexProcess.stdout.on('data', (buffer) => { if (stdout.length < 1024 * 1024) stdout += buffer; });
+    reindexProcess.stderr.on('data', (buffer) => { if (stderr.length < 256 * 1024) stderr += buffer; });
+    reindexProcess.on('error', (error) => { reindexProcess = null; reject(error); });
+    reindexProcess.on('exit', (code) => {
+      reindexProcess = null;
+      if (code !== 0) return reject(new Error(stderr.trim() || 'The local indexer failed.'));
+      let details = {};
+      try { details = JSON.parse(stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) || '{}'); } catch (_) { details = {}; }
+      if (details.state === 'already_running') return resolve({ started: false, state: 'already_running', details, message: 'The local indexer is already running in the background.' });
+      resolve({ started: true, state: details.state || 'complete', details, message: 'Local indexing completed.' });
+    });
+  });
+}
+
+function queueReindex() {
+  startReindex().catch((error) => console.error(`[local-indexer] ${error.message}`));
 }
 
 function refreshMessages() {
@@ -258,7 +276,7 @@ async function addFiles(window) {
     await fs.copyFile(source, destination);
     added.push({ name: path.basename(source), path: destination });
   }
-  if (added.length) startReindex();
+  if (added.length) queueReindex();
   return { canceled: false, added, rejected, inbox: MANAGED_INBOX };
 }
 
@@ -310,7 +328,7 @@ async function addImages(window) {
     await fs.writeFile(sidecar, `# Image text: ${path.basename(source)}\n\n${text}\n`, { mode: 0o600 });
     added.push({ name: path.basename(source), path: destination, text: text.slice(0, 12000) });
   }
-  if (added.length) startReindex();
+  if (added.length) queueReindex();
   return { canceled: false, added, rejected };
 }
 
@@ -497,6 +515,7 @@ function createLoadingWindow() {
 }
 
 ipcMain.handle('local-api', (_, route, options) => localApi(route, options));
+ipcMain.handle('run-indexer', () => startReindex());
 ipcMain.handle('export-graph-state', async (event) => {
   const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
     title: 'Export portable knowledge graph state',
@@ -575,6 +594,7 @@ app.on('before-quit', () => {
   if (backend) backend.kill('SIGTERM');
   if (mlxServer) mlxServer.kill('SIGTERM');
   if (imessageRefresh) imessageRefresh.kill('SIGTERM');
+  if (reindexProcess) reindexProcess.kill('SIGTERM');
   if (imessageTimer) clearInterval(imessageTimer);
   if (speechProcess) speechProcess.kill('SIGTERM');
   if (fnKeyMonitor) fnKeyMonitor.kill('SIGTERM');

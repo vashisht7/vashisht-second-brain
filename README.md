@@ -17,6 +17,7 @@ This repository contains only the reusable application architecture. It intentio
 - Expandable semantic knowledge graph with local search, subtopics, deduplication, source dates and relationship explanations
 - Readable message timelines with contact aliases instead of raw IDs or JSONL files
 - Portable graph-state export and newer-record merge across devices
+- Manual incremental indexing from Training, with local progress and changed/skipped/error totals
 
 ## Architecture
 

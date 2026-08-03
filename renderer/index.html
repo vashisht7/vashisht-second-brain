@@ -13,7 +13,7 @@
       <div class="drag-zone"></div>
       <div class="brand">
         <div class="brand-mark">VD</div>
-        <div><strong>Vashisht Devasani</strong><span>Second Brain 4.0.0</span></div>
+        <div><strong>Vashisht Devasani</strong><span>Second Brain 4.1.0</span></div>
       </div>
       <button class="new-chat" id="newChat"><span>＋</span> New conversation</button>
       <nav class="nav">
@@ -120,6 +120,10 @@
       <section id="trainingView" class="view panel-view">
         <header class="topbar"><div><h1>Training</h1><p>Style adapter and evaluation status</p></div></header>
         <div class="dashboard" id="trainingDashboard"></div>
+        <article class="indexer-control">
+          <div class="indexer-copy"><span class="eyebrow">Knowledge maintenance</span><h2>Update my local knowledge</h2><p>The indexer checks approved folders, extracts supported text, skips unchanged files, blocks protected-looking material, and creates Qwen embeddings for retrieval. It updates knowledge without changing Gemma or its adapter.</p><div class="indexer-actions"><button type="button" class="primary" id="runIndexer">Run indexer now</button><span id="indexerStatus">Use this after adding, moving, or restoring documents.</span></div></div>
+          <div class="adapter-explanation"><strong>Is the model fine-tuned?</strong><p>Yes—the LoRA adapter is the fine-tuned part. Gemma’s original weights remain unchanged. At runtime MLX loads Gemma plus your trained adapter, which adds small learned weight adjustments for your writing patterns. Facts stay in the index so they can update without retraining.</p></div>
+        </article>
         <article class="language-interview" id="languageInterview">
           <div class="interview-heading"><div><span class="eyebrow">Private language interview</span><h2>Teach my Telugu-English</h2><p>Answer exactly as you would write it. The app learns grammar, word order, transliteration and code-switching—not the emotion of the example.</p></div><strong id="languageProgress">0/40</strong></div>
           <div class="progress-track"><span id="languageProgressBar"></span></div>

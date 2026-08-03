@@ -1091,7 +1091,7 @@ def status():
             pass
     vault = VAULT_STATUS_CACHE
     return {
-        "app": "Vashisht Devasani 4.0.0", "model": selected_model(), "localModelOnline": bool(MLX_URL) or bool(ollama_models()),
+        "app": "Vashisht Devasani 4.1.0", "model": selected_model(), "localModelOnline": bool(MLX_URL) or bool(ollama_models()),
         "ollamaOnline": bool(ollama_models()),
         "embeddingModel": config.get("embedding_model"), "indexFiles": files, "indexChunks": chunks,
         "qwenMigration": migration, "voiceMemos": {"complete": transcript_count, "total": 27},

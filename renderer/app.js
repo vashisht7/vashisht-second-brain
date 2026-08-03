@@ -966,6 +966,26 @@ elements.prompt.addEventListener('input', () => {
 $('newChat').onclick = newConversation;
 $('openBackupKit').onclick = () => addMessage('assistant', 'Use the portable graph export for graph metadata. Keep full backup tooling outside the public repository.');
 $('openQuickChat').onclick = () => window.brain.openQuickWindow();
+$('runIndexer').onclick = async () => {
+  const button = $('runIndexer');
+  const status = $('indexerStatus');
+  button.disabled = true;
+  button.textContent = 'Indexing locally…';
+  status.textContent = 'Checking approved folders. Large first-time imports can take several minutes.';
+  try {
+    const result = await window.brain.runIndexer();
+    const details = result.details || {};
+    status.textContent = result.started
+      ? `Complete · ${details.changed_files || 0} changed · ${details.unchanged_files || 0} unchanged · ${details.errors || 0} errors · ${details.new_chunks || 0} passages added.`
+      : result.message;
+    await Promise.all([refreshStatus(), refreshKnowledgeGraph()]);
+  } catch (error) {
+    status.textContent = `Indexing failed: ${error.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Run indexer now';
+  }
+};
 $('exportGraphState').onclick = async () => {
   const status = $('graphTransferStatus'); status.textContent = 'Preparing local export…';
   try {
