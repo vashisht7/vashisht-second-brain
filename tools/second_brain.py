@@ -32,7 +32,7 @@ TEXT_SUFFIXES = {
     ".json", ".ipynb"
 }
 MAX_CHUNKS_PER_FILE = 400
-MAX_PDF_PAGES = 200
+MAX_PDF_PAGES = 1000
 SCAN_LOCK_HANDLE = None
 
 
@@ -85,9 +85,13 @@ def allowed(path: Path):
         return False
     if any(term.casefold() in name for term in CONFIG["excluded_name_terms"]):
         return False
-    if path.name.startswith(".") or path.stat().st_size > 5_000_000:
+    if path.name.startswith("."):
         return False
-    return path.suffix.casefold() in TEXT_SUFFIXES | {".pdf", ".docx", ".jsonl"}
+    suffix = path.suffix.casefold()
+    size_limit = 35_000_000 if suffix in {".pdf", ".docx", ".jsonl"} else 10_000_000
+    if path.stat().st_size > size_limit:
+        return False
+    return suffix in TEXT_SUFFIXES | {".pdf", ".docx", ".jsonl"}
 
 
 def fingerprint(path: Path):

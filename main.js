@@ -571,13 +571,14 @@ app.whenReady().then(async () => {
   const backgroundLaunch = process.argv.includes('--background');
   if (!backgroundLaunch) createWindow();
   createQuickWindow();
-  const shortcutRegistered = globalShortcut.register('Control+Shift+Space', toggleQuickWindow);
+  const shortcutRegistered = globalShortcut.register('Control+Shift+Space', fallbackShortcutSignal);
   if (!shortcutRegistered) console.error('Control-Shift-Space could not be registered');
   if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true, args: ['--background'] });
   // The native listener supplies both key-down and key-up events. Registering
   // the same accelerator here would make one physical press toggle twice once
   // macOS Accessibility access is enabled.
   installQuickChatMenu();
+  startFnKeyMonitor();
   refreshMessages();
   imessageTimer = setInterval(refreshMessages, 5 * 60 * 1000);
   app.on('activate', () => {
