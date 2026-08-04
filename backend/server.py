@@ -782,7 +782,9 @@ def route_question(query, audience="self"):
         r"\b(?:what|when|where|who)\s+(?:did|have|was)\s+i\b",
         r"\bi\s+(?:wrote|said|sent|received|built|worked on|saved|downloaded)\b",
         r"\b(?:partner|from my (?:laptop|database|documents|messages|data)|in my files|in my notes)\b",
-    )
+        r"\b(?:pdf|docx|txt|markdown|epub|jsonl)\b",
+        r"\b(?:chapters?|pages?|paragraphs?|sections?|lines?|contents?)\s+in\b",
+     )
     current_patterns = (
         r"\b(?:latest|current|currently|today|tonight|now|new|recent|recently|news|price|weather|forecast|score|schedule|released?|updated?|newest|this week|this month|recommend|recommendation)\b",
         r"\b(?:best|available|near me|how much|where can i buy)\b",
