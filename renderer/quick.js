@@ -257,18 +257,7 @@ async function ask(text) {
     setOrbState('speaking');
     await window.brain.speakText(spokenMessage);
     setOrbState('idle');
-
-    // Auto-close after 5s if user doesn't interact or speak
-    showStatus('Standing by (closing in 5s)…');
-    if (state.autoCloseTimer) clearTimeout(state.autoCloseTimer);
-    state.autoCloseTimer = setTimeout(() => {
-      if (!state.recording && !state.busy) {
-        state.closing = true;
-        resetAudio();
-        window.brain.hideQuickWindow();
-        state.closing = false;
-      }
-    }, 5000);
+    showStatus('Ready · Say "Hey Rishi" or "Stop" anytime');
 
   } catch (error) {
     if (answerText) answerText.textContent = `Error: ${error.message}`;
@@ -367,22 +356,16 @@ async function stopRecording() {
     const result = await window.brain.transcribeAudio(wav(samples), 'audio/wav');
     const text = (result?.text || '').trim();
     if (!text) {
-      state.closing = true;
-      showStatus('Signing off…');
+      showStatus('Ready · Say "Hey Rishi" anytime');
       setOrbState('idle');
-      window.brain.hideQuickWindow();
-      state.closing = false;
       return;
     }
     if (prompt) prompt.value = text;
     showStatus(`Understood: "${text}"`);
     await ask(text);
   } catch (error) {
-    state.closing = true;
-    showStatus('Signing off…');
+    showStatus('Ready · Say "Hey Rishi" anytime');
     setOrbState('idle');
-    window.brain.hideQuickWindow();
-    state.closing = false;
   } finally {
     if (mic) {
       mic.classList.remove('processing');
