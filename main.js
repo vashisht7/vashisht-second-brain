@@ -766,7 +766,7 @@ ipcMain.handle('hide-quick-window', () => {
       wakeWordProcess.stdin.write('PAUSE\n');
       setTimeout(() => {
         try { wakeWordProcess?.stdin?.write('RESUME\n'); } catch (_) {}
-      }, 4000);
+      }, 1500);
     } catch (_) {}
   }
   return true;

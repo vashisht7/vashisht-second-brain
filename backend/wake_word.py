@@ -169,7 +169,11 @@ def main():
     # ── Phase 2: Listen ──────────────────────────────────────────────
     audio_q: _queue.Queue = _queue.Queue(maxsize=1000)
 
+    last_audio_time = time.monotonic()
+
     def _sd_callback(indata, frames, time_info, status):
+        nonlocal last_audio_time
+        last_audio_time = time.monotonic()
         if status:
             _log(f"WAKE_WORD_STATUS:Audio status: {status}")
         if not _paused:
@@ -286,7 +290,12 @@ def main():
             callback=_sd_callback,
         ):
             while True:
-                time.sleep(0.5)
+                time.sleep(2.0)
+                # CoreAudio Watchdog: If no audio callbacks received for > 8 seconds (e.g. system sleep/wake),
+                # exit immediately so parent Electron process auto-restarts a fresh stream!
+                if time.monotonic() - last_audio_time > 8.0:
+                    _log("WAKE_WORD_ERROR:Mic stream stopped receiving audio (system sleep detected). Restarting...")
+                    sys.exit(1)
     except Exception as exc:
         _log(f"WAKE_WORD_ERROR:Mic stream failed: {exc}")
         sys.exit(1)
