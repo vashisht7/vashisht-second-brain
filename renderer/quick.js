@@ -191,6 +191,11 @@ async function ask(text) {
   // Handle Stop Intent: Close popup immediately and sign off
   if (isStopIntent(text)) {
     state.closing = true;
+    if (state.currentFetchController) {
+      try { state.currentFetchController.abort(); } catch (_) {}
+      state.currentFetchController = null;
+    }
+    window.brain.stopSpeaking();
     resetAudio();
     showStatus('Signing off…');
     window.brain.hideQuickWindow();
@@ -198,6 +203,7 @@ async function ask(text) {
       await window.brain.speakText("Signing off.");
     } catch (_) {}
     state.closing = false;
+    state.busy = false;
     return;
   }
 
@@ -212,9 +218,12 @@ async function ask(text) {
   showStatus('Rishi is thinking…');
   setOrbState('thinking');
 
+  state.currentFetchController = new AbortController();
+
   try {
     const payload = await window.brain.api('/api/chat', {
       method: 'POST',
+      signal: state.currentFetchController.signal,
       body: JSON.stringify({
         message: text,
         conversationId: state.conversationId,
@@ -372,6 +381,19 @@ async function stopRecording() {
 if (orbBar) {
   orbBar.onclick = (e) => {
     if (e.target.closest('#close')) return;
+    // If speaking or thinking, stop speech & cancel request immediately
+    if (state.busy || orbBar.classList.contains('speaking')) {
+      if (state.currentFetchController) {
+        try { state.currentFetchController.abort(); } catch (_) {}
+        state.currentFetchController = null;
+      }
+      window.brain.stopSpeaking();
+      resetAudio();
+      state.busy = false;
+      showStatus('Voice stopped');
+      setOrbState('idle');
+      return;
+    }
     setExpandedMode(!state.isExpanded);
   };
 }
@@ -390,6 +412,18 @@ if ($('composer')) {
 if (mic) {
   mic.onclick = (e) => {
     e.stopPropagation();
+    if (state.busy || orbBar?.classList.contains('speaking')) {
+      if (state.currentFetchController) {
+        try { state.currentFetchController.abort(); } catch (_) {}
+        state.currentFetchController = null;
+      }
+      window.brain.stopSpeaking();
+      resetAudio();
+      state.busy = false;
+      showStatus('Voice stopped');
+      setOrbState('idle');
+      return;
+    }
     state.recording ? stopRecording() : startRecording().catch((err) => { resetAudio(); showStatus(err.message); });
   };
 }
@@ -407,8 +441,16 @@ if ($('stopSpeech')) {
 if ($('close')) {
   $('close').onclick = (e) => {
     e.stopPropagation();
+    state.closing = true;
+    if (state.currentFetchController) {
+      try { state.currentFetchController.abort(); } catch (_) {}
+      state.currentFetchController = null;
+    }
     window.brain.stopSpeaking();
+    resetAudio();
+    state.busy = false;
     window.brain.hideQuickWindow();
+    state.closing = false;
   };
 }
 if ($('newChat')) {

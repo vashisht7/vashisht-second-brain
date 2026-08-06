@@ -324,6 +324,31 @@ def fuzzy_find_laptop_files(query):
     return matched_files[:3]
 
 
+def quick_conversational_fastpath(question):
+    norm = re.sub(r"[^a-z0-9\s]", "", question.lower()).strip()
+    greetings = {
+        "hi": "Hello! How can I help you?",
+        "hello": "Hello! What can I do for you today?",
+        "hey rishi": "Hey! I'm listening. How can I assist you?",
+        "hi rishi": "Hi there! What do you need?",
+        "hello rishi": "Hello! Ready when you are.",
+        "who are you": "I am Rishi, your personal AI assistant.",
+        "what is your name": "My name is Rishi, your local AI companion.",
+        "how are you": "I'm doing great and ready to help you!",
+        "how are you doing": "Doing excellent! What's on your mind?",
+        "thanks": "You're welcome!",
+        "thank you": "Happy to help!",
+        "good morning": "Good morning! Hope you have a productive day.",
+        "good evening": "Good evening! How can I help you tonight?",
+        "good night": "Good night! Have a peaceful rest.",
+        "okay": "Let me know whenever you're ready.",
+        "ok": "Standing by!",
+    }
+    if norm in greetings:
+        return greetings[norm]
+    return None
+
+
 def normalized_memory_key(value):
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value).casefold())).strip()
 
@@ -1044,6 +1069,20 @@ def chat(payload):
     question = str(payload.get("message") or "").strip()
     if not question or len(question) > 20_000:
         raise ValueError("Message must contain between 1 and 20,000 characters")
+
+    # Fast-path for small conversational phrases (< 30ms response)
+    fast_response = quick_conversational_fastpath(question)
+    if fast_response:
+        conversation_id = payload.get("conversationId") or create_conversation(title_for(question), "self")
+        return {
+            "conversationId": conversation_id,
+            "message": fast_response,
+            "sources": [],
+            "model": "fastpath",
+            "toggles": {"privateSession": True},
+            "route": {"id": "fastpath", "label": "Fast Response"}
+        }
+
     audience = payload.get("audience") if payload.get("audience") in {"self", "charvi", "friend"} else "self"
     route = route_question(question, audience)
     toggles = {
