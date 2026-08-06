@@ -1108,7 +1108,6 @@ def chat(payload):
             "Copy grammar, transliteration habits, sentence structure, and code-switch placement only—not emotional tone or facts."
         )
     if toggles["personalKnowledge"]:
-        # 1. Standard vector retrieve
         for index, item in enumerate(retrieve(question), 1):
             source = {
                 "label": item.get("title") or Path(item["path"]).name,
@@ -1117,21 +1116,21 @@ def chat(payload):
             sources.append(source)
             context_blocks.append(f"[P{index}] {source['label']}\nSource: {source['path']} ({source['locator']})\n{item['text'][:1800]}")
 
-        # 2. Direct Fuzzy Laptop File Search (Desktop, Downloads, Documents, PersonalAIData)
-        fuzzy_files = fuzzy_find_laptop_files(question)
-        for index, fitem in enumerate(fuzzy_files, 1):
-            source = {
-                "label": fitem["name"],
-                "path": fitem["path"],
-                "locator": "fuzzy file match",
-                "kind": "desktop_file"
-            }
-            if not any(s.get("path") == fitem["path"] for s in sources):
-                sources.append(source)
-                context_blocks.append(
-                    f"[FILE{index}] {fitem['name']}\nPath: {fitem['path']}\n"
-                    f"Direct File Content:\n{fitem['text'][:4000]}"
-                )
+    # Unconditional Direct Fuzzy Laptop File Search (Desktop, Downloads, Documents, PersonalAIData)
+    fuzzy_files = fuzzy_find_laptop_files(question)
+    for index, fitem in enumerate(fuzzy_files, 1):
+        source = {
+            "label": fitem["name"],
+            "path": fitem["path"],
+            "locator": "fuzzy file match",
+            "kind": "desktop_file"
+        }
+        if not any(s.get("path") == fitem["path"] for s in sources):
+            sources.append(source)
+            context_blocks.append(
+                f"[FILE{index}] {fitem['name']}\nPath: {fitem['path']}\n"
+                f"Direct File Content:\n{fitem['text'][:8000]}"
+            )
 
     if toggles["privateVault"]:
         facts = pii_lookup(question)

@@ -759,7 +759,18 @@ ipcMain.handle('transcribe-audio', (_, payload) => transcribeAudio(payload));
 ipcMain.handle('copy-text', (_, value) => { clipboard.writeText(String(value || '')); return true; });
 ipcMain.handle('speak-text', (_, value) => speakText(value));
 ipcMain.handle('stop-speaking', () => { if (speechProcess) speechProcess.kill('SIGTERM'); speechProcess = null; return true; });
-ipcMain.handle('hide-quick-window', () => { quickWindow?.hide(); return true; });
+ipcMain.handle('hide-quick-window', () => {
+  quickWindow?.hide();
+  if (wakeWordProcess && wakeWordProcess.stdin) {
+    try {
+      wakeWordProcess.stdin.write('PAUSE\n');
+      setTimeout(() => {
+        try { wakeWordProcess?.stdin?.write('RESUME\n'); } catch (_) {}
+      }, 4000);
+    } catch (_) {}
+  }
+  return true;
+});
 ipcMain.handle('open-quick-window', () => { toggleQuickWindow(); return true; });
 ipcMain.handle('resize-quick-window', (_, { w, h }) => {
   if (!quickWindow || quickWindow.isDestroyed()) return false;

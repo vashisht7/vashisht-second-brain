@@ -190,14 +190,14 @@ async function ask(text) {
 
   // Handle Stop Intent: Close popup immediately and sign off
   if (isStopIntent(text)) {
+    state.closing = true;
     resetAudio();
     showStatus('Signing off…');
-    setOrbState('speaking');
+    window.brain.hideQuickWindow();
     try {
       await window.brain.speakText("Signing off.");
     } catch (_) {}
-    setOrbState('idle');
-    window.brain.hideQuickWindow();
+    state.closing = false;
     return;
   }
 
@@ -267,7 +267,7 @@ function armSilenceTimer() {
 
 /* ── Recording ─────────────────────────────────────────────── */
 async function startRecording() {
-  if (state.recording) return;
+  if (state.recording || state.closing) return;
   state.voiceRequested = true;
   showStatus('Listening… (max 3s silence)');
   const allowed = await window.brain.requestMicrophone();
