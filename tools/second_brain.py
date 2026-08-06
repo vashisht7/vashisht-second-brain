@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/Users/vashishtdevasani/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3
 """Incremental local index and retrieval-backed Gemma chat."""
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from pypdf import PdfReader
 
 
 ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = Path(os.environ.get("PERSONAL_AI_CONFIG", Path.home() / "SecondBrainData/config.json"))
+CONFIG_PATH = Path(os.environ.get("PERSONAL_AI_CONFIG", ROOT / "config.json"))
 CONFIG = json.loads(CONFIG_PATH.read_text())
 INDEX = Path(CONFIG["index_path"])
 TEXT_SUFFIXES = {
@@ -135,7 +135,7 @@ def whatsapp_records(path: Path):
             partner = str(group[0].get("partner") or "Unknown")
             lines = []
             for item in group:
-                speaker = os.environ.get("SECOND_BRAIN_OWNER_NAME", "Owner") if item.get("authored_by_me") else partner
+                speaker = "Vashisht" if item.get("authored_by_me") else partner
                 timestamp = str(item.get("created_at") or "")
                 lines.append(f"{timestamp} — {speaker}: {item['_body']}")
             body = "\n".join(lines)
@@ -302,40 +302,89 @@ def cosine(left, right):
     return dot / norm if norm else 0.0
 
 
-def retrieve(query: str, limit=8):
+_cross_encoder_model = None
+
+def get_reranker():
+    global _cross_encoder_model
+    if _cross_encoder_model is None:
+        try:
+            from sentence_transformers import CrossEncoder
+            _cross_encoder_model = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        except Exception:
+            _cross_encoder_model = False
+    return _cross_encoder_model
+
+
+def retrieve(query: str, limit=8, rrf_k=60, w_dense=1.0, w_sparse=0.85):
+    """
+    Production-Grade Hybrid RAG Retrieval using RRF + Cross-Encoder Reranker.
+    Combines dense vector cosine similarity with sparse BM25 keyword ranks from FTS5,
+    and reranks the top 20 candidates using cross-encoder/ms-marco-MiniLM-L-6-v2.
+    """
     con = database()
     prefix = CONFIG.get("query_prefix", "search_query: ")
     payload = {"model": CONFIG["embedding_model"], "input": [prefix + query]}
     if CONFIG.get("embedding_options"):
         payload["options"] = CONFIG["embedding_options"]
     vector = post("/api/embed", payload)["embeddings"][0]
-    scored = []
+    
+    # 1. Dense Vector Scoring & Ranking
+    dense_scored = []
     for row in con.execute("SELECT id,path,locator,title,text,embedding FROM chunks"):
-        scored.append((cosine(vector, unpack(row[5])), row[:5]))
-    scored.sort(reverse=True, key=lambda item: item[0])
-    # Hybrid retrieval: semantic similarity handles paraphrases and mixed
-    # language; FTS adds a controlled boost for exact names, dates, and IDs.
-    exact_ranks = {}
+        dense_scored.append((cosine(vector, unpack(row[5])), row[:5]))
+    dense_scored.sort(reverse=True, key=lambda item: item[0])
+    
+    dense_ranks = {row[0]: rank for rank, (_, row) in enumerate(dense_scored, 1)}
+    
+    # 2. Sparse BM25 Scoring & Ranking via FTS5
+    bm25_ranks = {}
     terms = [term for term in re.findall(r"[^\W_]+", query, flags=re.UNICODE) if len(term) > 1]
     if terms:
         expression = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms[:12])
         try:
             for rank, (row_id,) in enumerate(
                 con.execute(
-                    "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) LIMIT 60",
+                    "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) LIMIT 80",
                     (expression,),
                 ),
                 1,
             ):
-                exact_ranks[row_id] = rank
+                bm25_ranks[row_id] = rank
         except sqlite3.OperationalError:
             pass
+            
+    # 3. Reciprocal Rank Fusion (RRF)
     rescored = []
-    for semantic_score, row in scored:
-        exact_rank = exact_ranks.get(row[0])
-        exact_boost = 0.12 / (1.0 + (exact_rank - 1) / 5.0) if exact_rank else 0.0
-        rescored.append((semantic_score + exact_boost, row))
+    for cos_score, row in dense_scored:
+        doc_id = row[0]
+        d_rank = dense_ranks[doc_id]
+        b_rank = bm25_ranks.get(doc_id)
+        
+        rrf_score = (w_dense / (rrf_k + d_rank))
+        if b_rank:
+            rrf_score += (w_sparse / (rrf_k + b_rank))
+            
+        rescored.append((rrf_score, row))
+        
     rescored.sort(reverse=True, key=lambda item: item[0])
+
+    # 4. Cross-Encoder Reranking (Step 2 Implementation)
+    top_candidates = rescored[:20]
+    reranker = get_reranker()
+    if reranker and top_candidates:
+        pairs = [[query, f"{row[3]}\n{row[4]}"] for _, row in top_candidates]
+        try:
+            cross_scores = reranker.predict(pairs)
+            reranked = []
+            for (rrf_sc, row), ce_sc in zip(top_candidates, cross_scores):
+                final_score = float(ce_sc) + (rrf_sc * 10.0)
+                reranked.append((final_score, row))
+            reranked.sort(reverse=True, key=lambda item: item[0])
+            con.close()
+            return reranked[:limit]
+        except Exception:
+            pass
+
     con.close()
     return rescored[:limit]
 
