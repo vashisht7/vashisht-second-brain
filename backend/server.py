@@ -851,13 +851,13 @@ def calculate_age_from_dob(dob_str):
         dt_obj = None
         for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y"):
             try:
-                dt_obj = datetime.strptime(dob_str.strip(), fmt).date()
+                dt_obj = dt.datetime.strptime(dob_str.strip(), fmt).date()
                 break
             except Exception:
                 pass
         if not dt_obj:
             return None
-        today = datetime.now().date()
+        today = dt.datetime.now().date()
         age = today.year - dt_obj.year - ((today.month, today.day) < (dt_obj.month, dt_obj.day))
         return age
     except Exception:
@@ -896,12 +896,14 @@ def format_protected_answer(facts, query=""):
             lines.append(f"I can’t provide a verified current {label}. {reason}")
             continue
 
-        # If user is asking for age and field is date_of_birth or value looks like date
-        if asking_for_age or field in {"date_of_birth", "dob"}:
+        # If field is date_of_birth, compute current age and provide both DOB and age
+        if field in {"date_of_birth", "dob"}:
             age = calculate_age_from_dob(str(val))
-            if age is not None:
-                lines.append(f"Based on your verified date of birth ({val}) in your official records, you are {age} years old today. [V{index}]")
-                continue
+            age_str = f" As of today, you are {age} years old." if age is not None else ""
+            source = fact.get("source") or {}
+            provenance = source.get("label", "authoritative protected document")
+            lines.append(f"Your verified date of birth is {val}.{age_str} Verified from {provenance}. [V{index}]")
+            continue
 
         source = fact.get("source") or {}
         provenance = source.get("label", "authoritative protected document")
