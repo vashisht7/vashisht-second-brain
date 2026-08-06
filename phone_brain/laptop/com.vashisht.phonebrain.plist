@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.vashisht.phonebrain.plist
+  
+  Daily launchd job that runs the indexer + sync at 2:00 AM.
+  Runs even when the user is NOT logged in (LoadForLoginItems = false).
+  
+  Install:
+    cp com.vashisht.phonebrain.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.vashisht.phonebrain.plist
+  
+  Manual test run:
+    launchctl start com.vashisht.phonebrain
+  
+  Check status:
+    launchctl list | grep phonebrain
+  
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.vashisht.phonebrain.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vashisht.phonebrain</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/vashishtdevasani/PersonalAIData/95_tools/phone_brain/laptop/laptop_job.sh</string>
+    </array>
+
+    <!-- Run daily at 2:00 AM -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- If the machine was asleep at 2 AM, run as soon as it wakes up -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/vashishtdevasani/PersonalAIData/95_tools/phone_brain/laptop/launchd_stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/vashishtdevasani/PersonalAIData/95_tools/phone_brain/laptop/launchd_stderr.log</string>
+
+    <!-- Set environment so Keychain and Ollama are accessible -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+        <key>HOME</key>
+        <string>/Users/vashishtdevasani</string>
+        <key>USER</key>
+        <string>vashishtdevasani</string>
+    </dict>
+</dict>
+</plist>

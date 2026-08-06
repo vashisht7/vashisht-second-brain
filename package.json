@@ -1,17 +1,16 @@
 {
   "name": "vashisht-devasani",
   "productName": "Vashisht Devasani",
-  "version": "4.1.0",
+  "version": "5.4.0",
   "description": "Local-first personal intelligence with live web retrieval for macOS",
   "main": "main.js",
   "author": "Vashisht Devasani",
   "license": "UNLICENSED",
-  "private": false,
+  "private": true,
   "scripts": {
-    "build:native": "xcrun swiftc -O -framework AppKit native/fn_key_monitor.swift -o native/fn_key_monitor",
-    "start": "npm run build:native && electron-forge start",
+    "start": "electron-forge start",
     "package": "electron-forge package",
-    "make": "npm run build:native && electron-forge make"
+    "make": "electron-forge make"
   },
   "devDependencies": {
     "@electron-forge/cli": "7.11.2",

@@ -1,12 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-DATA_ROOT="${SECOND_BRAIN_DATA_ROOT:-$HOME/SecondBrainData}"
+SOURCE_HOME="/Users/vashishtdevasani"
+SOURCE_ROOT="$SOURCE_HOME/PersonalAIData"
 STAMP="$(date +%Y-%m-%d_%H%M%S)"
-DEFAULT_OUTPUT="$HOME/Desktop/Second-Brain-Backup-$STAMP.tar.gz.enc"
+DEFAULT_OUTPUT="$SOURCE_HOME/Desktop/Vashisht-Devasani-Backup-$STAMP.tar.gz.enc"
 
-if [[ ! -d "$DATA_ROOT" ]]; then
-  echo "Second-brain data was not found at $DATA_ROOT"
+if [[ ! -d "$SOURCE_ROOT" ]]; then
+  echo "PersonalAIData was not found at $SOURCE_ROOT"
   read -r -p "Press Return to close."
   exit 1
 fi
@@ -31,8 +32,9 @@ if [[ -z "$PASSWORD" || "$PASSWORD" != "$CONFIRMATION" ]]; then
 fi
 
 echo "Creating encrypted migration backup…"
-SECOND_BRAIN_DATA_ROOT="$DATA_ROOT" /usr/bin/python3 "$(dirname "$0")/build_backup_stream.py" \
+/usr/bin/python3 "$SOURCE_ROOT/Apps/Vasisht2ndBrain/migration/build_backup_stream.py" \
   | /usr/bin/openssl enc -aes-256-cbc -salt -pbkdf2 -iter 250000 -pass fd:3 3<<<"$PASSWORD" > "$OUTPUT"
+
 unset PASSWORD CONFIRMATION
 chmod 600 "$OUTPUT"
 (
@@ -40,6 +42,9 @@ chmod 600 "$OUTPUT"
   /usr/bin/shasum -a 256 "$(basename "$OUTPUT")" > "$(basename "$OUTPUT").sha256"
   chmod 600 "$(basename "$OUTPUT").sha256"
 )
+
+echo
 echo "Backup created: $OUTPUT"
-echo "Keep its password separately; it cannot be recovered."
+echo "Checksum: $OUTPUT.sha256"
+echo "Keep the password separately. It cannot be recovered."
 read -r -p "Press Return to close."

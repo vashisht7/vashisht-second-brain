@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.brainbot.server.plist
+  Auto-starts receiver.py and api_server.py on Mac Mini boot under user brainbot.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.brainbot.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/brainbot/server/start_server.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/brainbot/server/launchd_stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/brainbot/server/launchd_stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+        <key>HOME</key>
+        <string>/Users/brainbot</string>
+        <key>USER</key>
+        <string>brainbot</string>
+    </dict>
+</dict>
+</plist>

@@ -5,13 +5,13 @@ var shortcutIsDown = false
 
 func observe(_ event: NSEvent) {
     let isSpace = event.keyCode == 49
-    let optionIsDown = event.modifierFlags.contains(.option)
-    if event.type == .keyDown && isSpace && optionIsDown && !shortcutIsDown {
+    let functionIsDown = event.modifierFlags.contains(.function)
+    if event.type == .keyDown && isSpace && functionIsDown && !shortcutIsDown {
         shortcutIsDown = true
         print("HOTKEY_DOWN")
         fflush(stdout)
     }
-    if shortcutIsDown && ((event.type == .keyUp && isSpace) || (event.type == .flagsChanged && !optionIsDown)) {
+    if shortcutIsDown && ((event.type == .keyUp && isSpace) || (event.type == .flagsChanged && !functionIsDown)) {
         shortcutIsDown = false
         print("HOTKEY_UP")
         fflush(stdout)

@@ -103,11 +103,62 @@ async function refreshConversations() {
   state.conversations = payload.conversations;
   elements.conversations.innerHTML = '';
   payload.conversations.forEach((conversation) => {
+    const container = document.createElement('div');
+    container.className = `conversation-item-container ${conversation.id === state.conversationId ? 'active' : ''}`;
+
     const button = document.createElement('button');
-    button.className = `conversation-item ${conversation.id === state.conversationId ? 'active' : ''}`;
+    button.className = 'conversation-item-btn';
     button.textContent = conversation.title;
     button.onclick = () => openConversation(conversation);
-    elements.conversations.appendChild(button);
+
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'conversation-menu-btn';
+    menuBtn.innerHTML = '···';
+    menuBtn.title = 'Conversation options';
+
+    let dropdown = null;
+    menuBtn.onclick = (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.conversation-dropdown-menu').forEach(m => m.remove());
+      if (dropdown) { dropdown = null; return; }
+      
+      dropdown = document.createElement('div');
+      dropdown.className = 'conversation-dropdown-menu';
+      
+      const delBtn = document.createElement('button');
+      delBtn.className = 'delete-item';
+      delBtn.innerHTML = '🗑 Delete chat';
+      delBtn.onclick = async (evt) => {
+        evt.stopPropagation();
+        dropdown.remove();
+        if (confirm(`Delete conversation "${conversation.title}"?`)) {
+          await api('/api/conversations/delete', {
+            method: 'POST',
+            body: JSON.stringify({ id: conversation.id })
+          });
+          if (state.conversationId === conversation.id) {
+            newConversation();
+          } else {
+            refreshConversations();
+          }
+        }
+      };
+
+      dropdown.appendChild(delBtn);
+      container.appendChild(dropdown);
+
+      const closeMenu = (event) => {
+        if (!container.contains(event.target)) {
+          dropdown?.remove();
+          document.removeEventListener('click', closeMenu);
+        }
+      };
+      setTimeout(() => document.addEventListener('click', closeMenu), 10);
+    };
+
+    container.appendChild(button);
+    container.appendChild(menuBtn);
+    elements.conversations.appendChild(container);
   });
 }
 
@@ -413,28 +464,34 @@ function metricCard(title, value, label) {
   return `<article class="card"><h3>${escapeHtml(title)}</h3><div class="metric">${escapeHtml(value)}</div><div class="metric-label">${escapeHtml(label)}</div></article>`;
 }
 
+function miniStat(label, value) {
+  return `<div class="mini-stat"><span class="mini-stat-value">${escapeHtml(String(value))}</span><span class="mini-stat-label">${escapeHtml(label)}</span></div>`;
+}
+
 async function refreshStatus() {
   state.status = await api('/api/status');
   $('modelLabel').textContent = state.status.model;
   $('statusDot').classList.toggle('online', state.status.localModelOnline ?? state.status.ollamaOnline);
-  const migration = state.status.qwenMigration?.state || 'unknown';
-  $('knowledgeDashboard').innerHTML = [
-    metricCard('Indexed sources', state.status.indexFiles.toLocaleString(), 'approved local files'),
-    metricCard('Searchable passages', state.status.indexChunks.toLocaleString(), state.status.embeddingModel || 'embedding index'),
-    metricCard('Voice Memos', `${state.status.voiceMemos.complete}/${state.status.voiceMemos.total}`, 'transcribed locally'),
-    metricCard('Apple Messages', (state.status.iMessage?.messages || 0).toLocaleString(), `${(state.status.iMessage?.conversations || 0).toLocaleString()} local conversations`),
-    `<article class="card wide"><div class="card-icon">⌁</div><div><h3>Qwen migration: ${escapeHtml(migration)}</h3><p>The existing index remains available until the multilingual Qwen index passes privacy and retrieval checks.</p></div></article>`,
-    `<article class="card wide"><div class="card-icon">⌾</div><div><h3>Protected vault</h3><p>${state.status.vault.documents} encrypted documents and ${state.status.vault.facts} structured facts. Documents are never embedded or used for training.</p></div></article>`
-  ].join('');
+  // Compact knowledge stats strip (mini, not full cards — graph is dominant)
+  $('knowledgeDashboard').innerHTML = `<div class="mini-stat-row">
+    ${miniStat('Sources', state.status.indexFiles.toLocaleString())}
+    ${miniStat('Passages', state.status.indexChunks.toLocaleString())}
+    ${miniStat('Voice memos', `${state.status.voiceMemos.complete}/${state.status.voiceMemos.total}`)}
+    ${miniStat('Messages', (state.status.iMessage?.messages || 0).toLocaleString())}
+    ${miniStat('Vault docs', state.status.vault?.documents ?? '—')}
+  </div>`;
   const counts = state.status.training?.counts || {};
   $('trainingDashboard').innerHTML = [
     metricCard('Training examples', ((counts.train || 0) + (counts.validation || 0) + (counts.test || 0)).toLocaleString(), 'review-only style records'),
-    metricCard('Partner style', (counts.high_partner || 0).toLocaleString(), 'high-priority examples'),
+    metricCard('Style adapter', (counts.high_charvi || counts.high_partner || 0).toLocaleString(), 'high-priority examples'),
     metricCard('Professional email', (counts.email_style || 0).toLocaleString(), 'authored examples'),
-    metricCard('Queued by you', (state.status.training?.queued_user_examples || 0).toLocaleString(), 'awaiting reviewed training run'),
+    metricCard('Queued by you', (state.status.training?.queued_user_examples || 0).toLocaleString(), 'awaiting next training run'),
     metricCard('Grammar interview', `${state.status.training?.language_interview?.answered || 0}/${state.status.training?.language_interview?.total || 40}`, 'Telugu-English answers'),
     `<article class="card wide"><div class="card-icon">◇</div><div><h3>${escapeHtml(state.status.training?.model?.status || state.status.training?.status || 'Not started')}</h3><p>The adapter is trained separately from factual knowledge. Protected information is excluded, and factual documents remain in retrieval rather than model weights.</p></div></article>`
   ].join('');
+  // Timestamps
+  if ($('lastIndexedLabel')) $('lastIndexedLabel').textContent = state.status.lastIndexed || 'Never';
+  if ($('lastTrainedLabel')) $('lastTrainedLabel').textContent = state.status.lastTrained || 'Never';
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -701,18 +758,43 @@ function renderKnowledgeGraph() {
   }
   viewport.innerHTML = '';
   const topics = state.graphTopics;
-  const center = { x: 450, y: 285 };
-  const colors = ['#a8ff78', '#65d4ff', '#c59bff', '#ffbd67', '#ff7f91', '#72e7cd', '#9eb5ff', '#f1db73', '#7fdbff', '#c3ff9a', '#ff9de2'];
+  const center = { x: 550, y: 310 };
+
+  // Brain region color map
+  const REGION_COLORS = {
+    frontal:  '#a8ff78',  // green  – Logic & Code
+    temporal: '#65d4ff',  // blue   – Personal Memory
+    parietal: '#ffbd67',  // amber  – Technical Reference
+    occipital:'#ff7478',  // coral  – Assets & Media
+  };
+  const DEFAULT_COLORS = ['#a8ff78', '#65d4ff', '#c59bff', '#ffbd67', '#ff7f91', '#72e7cd', '#9eb5ff', '#f1db73', '#7fdbff', '#c3ff9a', '#ff9de2'];
   const maxCount = Math.max(1, ...topics.map((topic) => topic.count));
+
+  // Distribute topics across two rings to prevent overlap
+  // Inner ring: up to 7 topics at radius 195; outer ring: remainder at 340
+  const INNER_CAPACITY = 7;
+  const INNER_R = 195;
+  const OUTER_R = 340;
+
   const positions = topics.map((topic, index) => {
-    const ring = topics.length > 9 && index >= 7 ? 205 : 150;
-    const ringItems = topics.length > 9 && index >= 7 ? topics.length - 7 : Math.min(7, topics.length);
-    const ringIndex = topics.length > 9 && index >= 7 ? index - 7 : index;
-    const angle = -Math.PI / 2 + (Math.PI * 2 * ringIndex) / Math.max(1, ringItems);
-    return { topic, x: center.x + Math.cos(angle) * ring * 1.75, y: center.y + Math.sin(angle) * ring, color: colors[index % colors.length] };
+    const inInner = index < INNER_CAPACITY;
+    const ring = inInner ? INNER_R : OUTER_R;
+    const ringItems = inInner ? Math.min(INNER_CAPACITY, topics.length) : topics.length - INNER_CAPACITY;
+    const ringIndex = inInner ? index : index - INNER_CAPACITY;
+    // Offset outer ring by half a step so labels interleave
+    const angleOffset = inInner ? -Math.PI / 2 : -Math.PI / 2 + Math.PI / Math.max(1, ringItems);
+    const angle = angleOffset + (Math.PI * 2 * ringIndex) / Math.max(1, ringItems);
+    const regionId = topic.region?.id;
+    const color = regionId ? (REGION_COLORS[regionId] || DEFAULT_COLORS[index % DEFAULT_COLORS.length]) : DEFAULT_COLORS[index % DEFAULT_COLORS.length];
+    return { topic, x: center.x + Math.cos(angle) * ring, y: center.y + Math.sin(angle) * ring, color };
   });
+
   const positionMap = new Map(positions.map((item) => [item.topic.name, item]));
+
+  // Draw edges first
   positions.forEach((item) => viewport.appendChild(svgElement('line', { x1: center.x, y1: center.y, x2: item.x, y2: item.y, class: 'graph-edge' })));
+
+  // Central brain node
   const brain = svgElement('g', { class: 'brain-node' });
   brain.appendChild(svgElement('circle', { cx: center.x, cy: center.y, r: 67 }));
   const brainTitle = svgElement('text', { x: center.x, y: center.y - 4, 'text-anchor': 'middle' });
@@ -721,45 +803,91 @@ function renderKnowledgeGraph() {
   brainSub.textContent = 'Second Brain';
   brain.append(brainTitle, brainSub);
   viewport.appendChild(brain);
+
+  // Topic nodes colored by Brain Region
   positions.forEach((item) => {
-    const radius = 35 + Math.sqrt(item.topic.count / maxCount) * 25;
+    const radius = 32 + Math.sqrt(item.topic.count / maxCount) * 22;
     const group = svgElement('g', { class: 'topic-node', transform: `translate(${item.x} ${item.y})`, tabindex: '0', role: 'button', 'aria-label': `${item.topic.name}, ${item.topic.count} files` });
     group.dataset.topic = item.topic.name;
     group.style.setProperty('--node-color', item.color);
+    const regionId = item.topic.region?.id || 'occipital';
+    group.dataset.region = regionId;
     group.appendChild(svgElement('circle', { r: radius }));
+    // Label lines with backdrop rect for readability
     const lines = topicLabelLines(item.topic.name);
+    const lineH = 14;
+    const totalH = lines.length * lineH;
+    const maxChars = Math.max(...lines.map((l) => l.length));
+    const rectW = Math.max(40, maxChars * 6.2 + 8);
+    const rectH = totalH + 4;
+    const backdrop = svgElement('rect', {
+      x: -rectW / 2, y: -totalH / 2 - 8,
+      width: rectW, height: rectH,
+      rx: 4, ry: 4,
+      fill: 'rgba(0,0,0,0.55)',
+    });
+    group.appendChild(backdrop);
     lines.forEach((line, lineIndex) => {
-      const textNode = svgElement('text', { x: 0, y: (lineIndex - (lines.length - 1) / 2) * 13 - 5, 'text-anchor': 'middle' });
+      const textNode = svgElement('text', { x: 0, y: (lineIndex - (lines.length - 1) / 2) * lineH - 2, 'text-anchor': 'middle' });
       textNode.textContent = line;
       group.appendChild(textNode);
     });
-    const count = svgElement('text', { x: 0, y: radius - 12, 'text-anchor': 'middle', class: 'node-count' });
+    const count = svgElement('text', { x: 0, y: radius - 10, 'text-anchor': 'middle', class: 'node-count' });
     count.textContent = item.topic.count.toLocaleString();
     group.appendChild(count);
     group.onclick = () => showTopicFiles(item.topic);
     group.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') showTopicFiles(item.topic); };
     viewport.appendChild(group);
   });
+
+  // Draw expanded document nodes
   if (state.graphExpandedTopic && positionMap.has(state.graphExpandedTopic.name)) {
     const origin = positionMap.get(state.graphExpandedTopic.name);
     state.graphExpandedFiles.forEach((file, index) => {
       const angle = -Math.PI / 2 + (Math.PI * 2 * index) / Math.max(1, state.graphExpandedFiles.length);
-      const distance = 105 + (index % 2) * 18;
+      const distance = 90 + (index % 2) * 22;
       const x = origin.x + Math.cos(angle) * distance;
       const y = origin.y + Math.sin(angle) * distance;
       viewport.appendChild(svgElement('line', { x1: origin.x, y1: origin.y, x2: x, y2: y, class: 'graph-edge document-edge' }));
       const group = svgElement('g', { class: 'document-node', transform: `translate(${x} ${y})`, tabindex: '0', role: 'button', 'aria-label': file.title });
       group.appendChild(svgElement('circle', { r: 22 }));
-      const label = svgElement('text', { x: 0, y: 35, 'text-anchor': 'middle' });
-      label.textContent = file.title.length > 20 ? `${file.title.slice(0, 18)}…` : file.title;
-      group.appendChild(label);
+      const truncated = file.title.length > 22 ? `${file.title.slice(0, 20)}…` : file.title;
+      // Label backdrop for document nodes too
+      const dback = svgElement('rect', { x: -40, y: 28, width: 80, height: 16, rx: 3, fill: 'rgba(0,0,0,0.6)' });
+      const label = svgElement('text', { x: 0, y: 40, 'text-anchor': 'middle' });
+      label.textContent = truncated;
+      group.append(dback, label);
       group.onclick = (event) => { event.stopPropagation(); showKnowledgeDocument(file, state.graphExpandedTopic); };
       group.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') showKnowledgeDocument(file, state.graphExpandedTopic); };
       viewport.appendChild(group);
     });
   }
+
+  // Brain region legend (bottom-right corner of SVG)
+  let legend = svg.querySelector('.region-legend');
+  if (!legend) {
+    legend = svgElement('g', { class: 'region-legend', transform: 'translate(830, 530)' });
+    svg.appendChild(legend);
+  }
+  legend.innerHTML = '';
+  const regions = [
+    { id: 'frontal',  color: '#a8ff78', label: 'Frontal – Logic & Code' },
+    { id: 'temporal', color: '#65d4ff', label: 'Temporal – Memory' },
+    { id: 'parietal', color: '#ffbd67', label: 'Parietal – Docs & PDFs' },
+    { id: 'occipital',color: '#ff7478', label: 'Occipital – Media' },
+  ];
+  regions.forEach((r, i) => {
+    const row = svgElement('g', { transform: `translate(0, ${i * 18})` });
+    const dot = svgElement('circle', { cx: 5, cy: -3, r: 5, fill: r.color, opacity: '0.85' });
+    const txt = svgElement('text', { x: 14, y: 0, 'font-size': '9', fill: '#aaa' });
+    txt.textContent = r.label;
+    row.append(dot, txt);
+    legend.appendChild(row);
+  });
+
   applyGraphTransform();
 }
+
 
 async function refreshKnowledgeGraph() {
   try {
@@ -964,7 +1092,7 @@ elements.prompt.addEventListener('input', () => {
   elements.prompt.style.height = `${Math.min(elements.prompt.scrollHeight, 170)}px`;
 });
 $('newChat').onclick = newConversation;
-$('openBackupKit').onclick = () => addMessage('assistant', 'Use the portable graph export for graph metadata. Keep full backup tooling outside the public repository.');
+$('openBackupKit').onclick = () => window.brain.openPath('/Users/vashishtdevasani/PersonalAIData/Apps/Vasisht2ndBrain/migration');
 $('openQuickChat').onclick = () => window.brain.openQuickWindow();
 $('runIndexer').onclick = async () => {
   const button = $('runIndexer');
@@ -983,9 +1111,55 @@ $('runIndexer').onclick = async () => {
     status.textContent = `Indexing failed: ${error.message}`;
   } finally {
     button.disabled = false;
-    button.textContent = 'Run indexer now';
+    button.textContent = 'Run indexer only';
   }
 };
+
+if ($('trainAdapter')) {
+  $('trainAdapter').onclick = async () => {
+    const button = $('trainAdapter');
+    const status = $('indexerStatus');
+    button.disabled = true;
+    button.textContent = 'Training adapter…';
+    status.textContent = 'Starting style adapter training in background. This can take 10–30 min.';
+    try {
+      const result = await api('/api/training/start', { method: 'POST', body: '{}' });
+      status.textContent = result.message || 'Training started.';
+      setTimeout(refreshStatus, 3000);
+    } catch (error) {
+      status.textContent = `Training failed: ${error.message}`;
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Train style adapter only';
+    }
+  };
+}
+
+if ($('fullRetrain')) {
+  $('fullRetrain').onclick = async () => {
+    const button = $('fullRetrain');
+    const status = $('indexerStatus');
+    button.disabled = true;
+    $('runIndexer').disabled = true;
+    if ($('trainAdapter')) $('trainAdapter').disabled = true;
+    button.textContent = 'Running full retrain…';
+    status.textContent = 'Running full reindex then training. This can take 30–60+ min.';
+    try {
+      await window.brain.runIndexer();
+      const result = await api('/api/training/start', { method: 'POST', body: '{}' });
+      status.textContent = (result.message || 'Training started.') + ' Index complete.';
+      await Promise.all([refreshStatus(), refreshKnowledgeGraph()]);
+    } catch (error) {
+      status.textContent = `Full retrain failed: ${error.message}`;
+    } finally {
+      button.disabled = false;
+      $('runIndexer').disabled = false;
+      if ($('trainAdapter')) $('trainAdapter').disabled = false;
+      button.textContent = 'Full retrain & reindex';
+    }
+  };
+}
+
 $('exportGraphState').onclick = async () => {
   const status = $('graphTransferStatus'); status.textContent = 'Preparing local export…';
   try {
@@ -1046,9 +1220,39 @@ elements.audience.onchange = () => {
   newConversation();
 };
 
+function initSidebarResizer() {
+  const resizer = document.getElementById('sidebarResizer');
+  const shell = document.querySelector('.shell');
+  if (!resizer || !shell) return;
+  let isResizing = false;
+
+  resizer.addEventListener('mousedown', () => {
+    isResizing = true;
+    resizer.classList.add('resizing');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const newWidth = Math.max(200, Math.min(450, e.clientX));
+    shell.style.setProperty('--sidebar-width', `${newWidth}px`);
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (isResizing) {
+      isResizing = false;
+      resizer.classList.remove('resizing');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+  });
+}
+
 async function initialize() {
   bindSuggestions();
   bindKnowledgeGraphControls();
+  initSidebarResizer();
   updateTools();
   await Promise.all([refreshStatus(), refreshConversations(), refreshLanguageInterview(), refreshKnowledgeGraph()]);
   setInterval(refreshStatus, 30000);

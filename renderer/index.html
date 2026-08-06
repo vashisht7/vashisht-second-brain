@@ -13,7 +13,7 @@
       <div class="drag-zone"></div>
       <div class="brand">
         <div class="brand-mark">VD</div>
-        <div><strong>Vashisht Devasani</strong><span>Second Brain 4.1.0</span></div>
+        <div><strong>Vasi Assistant</strong><span>Second Brain 5.0.0</span></div>
       </div>
       <button class="new-chat" id="newChat"><span>＋</span> New conversation</button>
       <nav class="nav">
@@ -29,6 +29,7 @@
         <div><strong id="modelLabel">Connecting…</strong><span>Runs locally on this Mac</span></div>
       </div>
     </aside>
+    <div class="sidebar-resizer" id="sidebarResizer"></div>
 
     <main class="main">
       <section id="chatView" class="view active-view">
@@ -41,7 +42,6 @@
             <label for="audience">Conversation</label>
             <select id="audience">
               <option value="self">Just me</option>
-              <option value="partner">With Partner</option>
               <option value="friend">With a friend</option>
             </select>
           </div>
@@ -73,7 +73,7 @@
             <textarea id="prompt" rows="1" placeholder="Ask your second brain…" autocomplete="off"></textarea>
             <div class="composer-bottom">
               <div class="composer-tools">
-                <button type="button" class="plus-button" id="plusButton" aria-label="Add or choose a tool" aria-expanded="false">＋</button>
+                <button type="button" class="plus-button" id="plusButton" aria-label="Add or choose a tool" aria-expanded="false"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
                 <div class="plus-menu" id="plusMenu" hidden>
                   <button type="button" data-plus-action="remember"><span>◆</span><b>Remember</b><small>Save a local fact</small></button>
                   <button type="button" data-plus-action="train"><span>◇</span><b>Train</b><small>Queue a style example</small></button>
@@ -109,7 +109,7 @@
               </div>
             </div>
             <p class="graph-help" id="graphStatus">Click a topic to expand its most useful files. Drag to pan and scroll to zoom.</p>
-            <svg id="knowledgeGraph" viewBox="0 0 900 570" role="img" aria-label="Interactive graph of knowledge topics"><g id="graphViewport"></g></svg>
+            <svg id="knowledgeGraph" viewBox="0 0 1100 620" role="img" aria-label="Interactive graph of knowledge topics"><g id="graphViewport"></g></svg>
           </div>
           <aside class="topic-files" id="topicFiles">
             <div class="empty-topic"><strong>Select a topic</strong><span>Its categorized files will appear here.</span></div>
@@ -118,22 +118,79 @@
       </section>
 
       <section id="trainingView" class="view panel-view">
-        <header class="topbar"><div><h1>Training</h1><p>Style adapter and evaluation status</p></div></header>
+        <header class="topbar"><div><h1>Training</h1><p>Style adapter · knowledge index · interview</p></div></header>
         <div class="dashboard" id="trainingDashboard"></div>
-        <article class="indexer-control">
-          <div class="indexer-copy"><span class="eyebrow">Knowledge maintenance</span><h2>Update my local knowledge</h2><p>The indexer checks approved folders, extracts supported text, skips unchanged files, blocks protected-looking material, and creates Qwen embeddings for retrieval. It updates knowledge without changing Gemma or its adapter.</p><div class="indexer-actions"><button type="button" class="primary" id="runIndexer">Run indexer now</button><span id="indexerStatus">Use this after adding, moving, or restoring documents.</span></div></div>
-          <div class="adapter-explanation"><strong>Is the model fine-tuned?</strong><p>Yes—the LoRA adapter is the fine-tuned part. Gemma’s original weights remain unchanged. At runtime MLX loads Gemma plus your trained adapter, which adds small learned weight adjustments for your writing patterns. Facts stay in the index so they can update without retraining.</p></div>
-        </article>
+
+        <!-- ── Operations ──────────────────────────────────── -->
+        <div class="training-ops">
+          <button type="button" class="op-card" id="runIndexer">
+            <span class="op-icon">⌁</span>
+            <strong>Index documents</strong>
+            <span>Scan new files &amp; update search</span>
+          </button>
+          <button type="button" class="op-card" id="trainAdapter">
+            <span class="op-icon">◇</span>
+            <strong>Train style adapter</strong>
+            <span>Fine-tune on latest examples</span>
+          </button>
+          <button type="button" class="op-card op-card--full" id="fullRetrain">
+            <span class="op-icon">↻</span>
+            <strong>Full retrain &amp; reindex</strong>
+            <span>Both operations in sequence</span>
+          </button>
+        </div>
+
+        <!-- ── Status + timestamps ─────────────────────────── -->
+        <div class="training-meta">
+          <span id="indexerStatus" class="training-status">Ready</span>
+          <div class="training-timestamps">
+            <span>Last indexed <strong id="lastIndexedLabel">—</strong></span>
+            <span>Last trained <strong id="lastTrainedLabel">—</strong></span>
+          </div>
+        </div>
+
+        <!-- ── Language interview ──────────────────────────── -->
         <article class="language-interview" id="languageInterview">
-          <div class="interview-heading"><div><span class="eyebrow">Private language interview</span><h2>Teach my Telugu-English</h2><p>Answer exactly as you would write it. The app learns grammar, word order, transliteration and code-switching—not the emotion of the example.</p></div><strong id="languageProgress">0/40</strong></div>
+          <div class="interview-heading">
+            <div>
+              <span class="eyebrow">Private language interview</span>
+              <h2>Teach my Telugu-English</h2>
+              <p>Answer exactly as you would write it. The app learns grammar, word order, and code-switching — not emotion.</p>
+            </div>
+            <strong id="languageProgress">0/40</strong>
+          </div>
           <div class="progress-track"><span id="languageProgressBar"></span></div>
-          <div class="interview-question"><span id="languageCategory"></span><h3 id="languagePrompt">Loading your next question…</h3><textarea id="languageAnswer" rows="3" placeholder="Type exactly how you would say it in your normal Telugu-English mix…"></textarea><div class="interview-actions"><button type="button" class="primary" id="saveLanguageAnswer">Save and next</button><button type="button" id="skipLanguageAnswer">Skip</button></div><small id="languageNote">Do not include names, account numbers, immigration details, or other protected information.</small></div>
+          <div class="interview-question">
+            <span id="languageCategory"></span>
+            <h3 id="languagePrompt">Loading your next question…</h3>
+            <textarea id="languageAnswer" rows="3" placeholder="Type exactly how you would say it…"></textarea>
+            <div class="interview-actions">
+              <button type="button" class="primary" id="saveLanguageAnswer">Save and next</button>
+              <button type="button" id="skipLanguageAnswer">Skip</button>
+            </div>
+            <small id="languageNote">Do not include names, account numbers, or protected information.</small>
+          </div>
         </article>
       </section>
 
       <section id="settingsView" class="view panel-view">
         <header class="topbar"><div><h1>Settings</h1><p>Privacy and local runtime</p></div></header>
         <div class="dashboard">
+          <article class="card wide" style="border-color: rgba(101, 212, 255, 0.4); background: rgba(101, 212, 255, 0.04);">
+            <div class="card-icon" style="color: var(--accent-2);">🎙️</div>
+            <div>
+              <h3>Hands-Free Wake Word — “Hey Rishi”</h3>
+              <p>Say <strong>“Hey Rishi”</strong> out loud anywhere on your Mac to activate the Jarvis Assistant. The glowing orbital sphere will pop up and listen for your prompt, then respond back via local voice.</p>
+              <div style="margin-top: 8px; font-size: 11px; color: var(--muted); line-height: 1.5;">
+                • <strong>Pronunciation Guide</strong>: Say it clearly like <em>“Hey REE-shee”</em> or <em>“Hey RISH-ee”</em>.<br>
+                • <strong>Keyboard Shortcut</strong>: You can also press <kbd style="padding:2px 5px; border-radius:4px; background:rgba(255,255,255,0.1); border: 1px solid var(--line);">⌘ + Shift + Space</kbd> anytime.<br>
+                • <strong>Status</strong>: <span style="color: var(--accent); font-weight: 600;">ACTIVE · Background listener listening for "Hey Rishi"</span>
+              </div>
+              <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center;">
+                <button class="primary" type="button" onclick="window.brain?.toggleQuickChat?.()">Test "Hey Rishi" Jarvis Orb</button>
+              </div>
+            </div>
+          </article>
           <article class="card wide"><div class="card-icon">⌾</div><div><h3>Protected information</h3><p>In “Just me,” questions about identifiers and immigration facts route automatically to the encrypted vault. Those facts are never embedded, trained on, or sent to web search, and identifiers remain redacted unless you explicitly request the full value.</p></div></article>
           <article class="card wide"><div class="card-icon">＋</div><div><h3>Plus menu</h3><p>The composer’s plus button contains Remember, Train, Think, Add image, and Add file. Files enter the managed index; images are read locally and their text is attached and indexed. Protected-looking content is rejected from ordinary memory and training.</p><button class="primary" id="addFilesSettings">Add files</button></div></article>
           <article class="card wide"><div class="card-icon">◎</div><div><h3>Automatic routing</h3><p>The app chooses the local model, your laptop knowledge, the live web, or both. Personal questions stay local; current information and version-sensitive coding use web evidence; ordinary coding runs directly on Gemma. Protected questions always remain in the encrypted vault.</p></div></article>

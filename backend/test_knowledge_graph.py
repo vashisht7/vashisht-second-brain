@@ -53,16 +53,16 @@ class KnowledgeGraphTests(unittest.TestCase):
         self.add_chunk("whatsapp/chat.jsonl", "WhatsApp with +1 (555) 555-0123", text)
         item = self.graph.topic_files("WhatsApp Conversations")["files"][0]
         self.assertNotIn("555", item["title"])
-        self.graph.save_alias(item["id"], "Alex")
+        self.graph.save_alias(item["id"], "Charvi")
         document = self.graph.document(item["id"])
-        self.assertEqual(document["title"], "Alex")
-        self.assertEqual(document["messages"][1]["speaker"], "Alex")
+        self.assertEqual(document["title"], "Charvi")
+        self.assertEqual(document["messages"][1]["speaker"], "Charvi")
         portable = self.root / "portable.vashishtgraph"
         self.graph.export_state(portable)
         second = LocalKnowledgeGraph(self.config, self.root / "second.sqlite")
         merged = second.merge_state(portable)
         self.assertEqual(merged["aliases"], 1)
-        self.assertEqual(second.topic_files("WhatsApp Conversations")["files"][0]["title"], "Alex")
+        self.assertEqual(second.topic_files("WhatsApp Conversations")["files"][0]["title"], "Charvi")
 
     def test_rejects_incompatible_portable_state(self):
         invalid = self.root / "invalid.vashishtgraph"
@@ -71,8 +71,8 @@ class KnowledgeGraphTests(unittest.TestCase):
             self.graph.merge_state(invalid)
 
     def test_document_identity_survives_a_different_macos_account_name(self):
-        first = LocalKnowledgeGraph.document_id("Documents & Downloads", "/Users/olduser/SecondBrainData/file.pdf", "File")
-        second = LocalKnowledgeGraph.document_id("Documents & Downloads", "/Users/newuser/SecondBrainData/file.pdf", "File")
+        first = LocalKnowledgeGraph.document_id("Documents & Downloads", "/Users/olduser/PersonalAIData/file.pdf", "File")
+        second = LocalKnowledgeGraph.document_id("Documents & Downloads", "/Users/newuser/PersonalAIData/file.pdf", "File")
         self.assertEqual(first, second)
 
 

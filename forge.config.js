@@ -7,12 +7,13 @@ module.exports = {
     extendInfo: {
       NSMicrophoneUsageDescription: 'Vashisht Devasani uses the microphone to transcribe your spoken questions locally on this Mac.'
     },
-    icon: './assets/icon',
+    icon: '/Users/vashishtdevasani/PersonalAIData/Apps/Vasisht2ndBrain/assets/icon',
     asar: true,
     extraResource: [
-      './backend',
-      './native',
-      './tools'
+      '/Users/vashishtdevasani/PersonalAIData/Apps/Vasisht2ndBrain/backend',
+      '/Users/vashishtdevasani/PersonalAIData/Apps/Vasisht2ndBrain/native',
+      '/Users/vashishtdevasani/PersonalAIData/95_tools/second_brain/transcribe_voice_command.py',
+      '/Users/vashishtdevasani/PersonalAIData/05_private_pii/tools/ocr_document.swift'
     ]
   },
   makers: [

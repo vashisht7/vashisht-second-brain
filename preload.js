@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('brain', {
   stopSpeaking: () => ipcRenderer.invoke('stop-speaking'),
   hideQuickWindow: () => ipcRenderer.invoke('hide-quick-window'),
   openQuickWindow: () => ipcRenderer.invoke('open-quick-window'),
+  resizeQuickWindow: (w, h) => ipcRenderer.invoke('resize-quick-window', { w, h }),
   onQuickFocus: (callback) => ipcRenderer.on('quick-focus', callback),
   onQuickVoiceStart: (callback) => ipcRenderer.on('quick-voice-start', callback),
   onQuickVoiceStop: (callback) => ipcRenderer.on('quick-voice-stop', callback),
@@ -20,3 +21,4 @@ contextBridge.exposeInMainWorld('brain', {
   openPath: (target) => ipcRenderer.invoke('open-path', target),
   openExternal: (target) => ipcRenderer.invoke('open-external', target)
 });
+

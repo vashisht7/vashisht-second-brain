@@ -3,35 +3,65 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'">
-  <title>Ask Vashisht Devasani</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'none'">
+  <title>Rishi · Voice Assistant</title>
   <link rel="stylesheet" href="quick.css">
 </head>
 <body>
-  <main class="quick-shell">
-    <header>
-      <div class="mark">VD</div>
-      <div><strong>Vashisht Devasani</strong><span id="status">Ask by voice or type</span></div>
-      <button class="icon quiet" id="newChat" title="New conversation">↻</button>
-      <button class="icon quiet" id="close" title="Close">×</button>
-    </header>
-    <section class="answer" id="answer" hidden>
-      <div class="answer-text" id="answerText"></div>
-      <div class="answer-actions">
-        <button id="copy">Copy</button>
-        <button id="speak">Speak again</button>
-        <button id="stopSpeech">Stop audio</button>
+  <main class="quick-shell" id="quickShell">
+    <!-- SIRI / JARVIS GLOWING ORB BAR (Always Visible) -->
+    <div class="orb-bar" id="orbBar" title="Click orb to toggle chat & files">
+      <div class="orb-wrapper" id="orbWrapper">
+        <div class="orb-ring ring-outer"></div>
+        <div class="orb-ring ring-inner"></div>
+        <div class="orb-core" id="orbCore">
+          <div class="orb-white-core"></div>
+        </div>
       </div>
-    </section>
-    <form id="composer">
-      <textarea id="prompt" rows="2" placeholder="Ask anything…" autofocus></textarea>
-      <div class="actions">
-        <span id="contextLabel">Context stays in this conversation</span>
-        <button type="button" class="mic" id="mic" aria-label="Start voice question"><span></span></button>
-        <button type="submit" class="send" id="send" aria-label="Send">↑</button>
+      <div class="orb-meta">
+        <div class="orb-title-row">
+          <span class="orb-title">Rishi</span>
+          <span class="orb-badge">Jarvis</span>
+        </div>
+        <span class="orb-status" id="orbStatus">Listening for "Hey Rishi"…</span>
       </div>
-    </form>
-    <footer>Control + Shift + Space to open or hide · microphone for voice</footer>
+      <button type="button" class="expand-chevron" id="expandToggleBtn" aria-label="Toggle chat" title="Open chat & files">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+      </button>
+      <button id="close" class="close-btn" title="Close (Esc)">✕</button>
+    </div>
+
+    <!-- EXPANDABLE CHAT & FILE UPLOAD PANEL (Collapsible, shown on click) -->
+    <div class="expanded-panel" id="expandedPanel" hidden>
+      <!-- Answer section -->
+      <section class="answer" id="answer" hidden>
+        <div class="answer-text" id="answerText"></div>
+        <div class="answer-actions">
+          <button id="copy">Copy</button>
+          <button id="speak">Speak</button>
+          <button id="stopSpeech">Stop</button>
+          <span class="answer-spacer"></span>
+          <button id="newChat" class="icon-btn" title="New conversation">↻</button>
+        </div>
+      </section>
+
+      <!-- Attachment strip for images & files -->
+      <div id="attachmentStrip" class="attachment-strip" hidden></div>
+
+      <!-- Input composer form -->
+      <form id="composer">
+        <textarea id="prompt" rows="1" placeholder="Type a message or drop image/file…" autofocus></textarea>
+        <div class="bar">
+          <button type="button" class="bar-btn attach-btn" id="attachBtn" aria-label="Attach file" title="Attach image or document">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 1v8M4 4l3-3 3 3M2 11h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="bar-btn mic" id="mic" aria-label="Voice input"><span></span></button>
+          <button type="submit" class="bar-btn send" id="send" aria-label="Send">↑</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="status" class="status-bar" hidden></div>
   </main>
   <script src="quick.js"></script>
 </body>

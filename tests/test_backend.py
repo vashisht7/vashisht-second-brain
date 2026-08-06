@@ -33,7 +33,7 @@ class PrivacyBoundaryTests(unittest.TestCase):
         backend.pii_lookup = forbidden
         result = backend.chat({
             "message": "what is my license number",
-            "audience": "partner",
+            "audience": "charvi",
             "toggles": {"privateVault": True, "privateSession": True},
         })
         self.assertFalse(result["toggles"]["privateVault"])
@@ -93,20 +93,14 @@ class PrivacyBoundaryTests(unittest.TestCase):
                 backend.RUNTIME, backend.DATABASE, backend.AUDIT = old_runtime, old_database, old_audit
 
     def test_full_identifier_requires_explicit_reveal_language(self):
-        with tempfile.NamedTemporaryFile() as vault:
-            previous = backend.PII_VAULT
-            backend.PII_VAULT = Path(vault.name)
-            try:
-                with mock.patch.object(backend.subprocess, "run") as run:
-                    run.return_value.returncode = 0
-                    run.return_value.stdout = "[]"
-                    backend.pii_lookup("show the full license number")
-                    self.assertIn("--reveal", run.call_args.args[0])
+        with mock.patch.object(backend.subprocess, "run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = "[]"
+            backend.pii_lookup("show the full license number")
+            self.assertIn("--reveal", run.call_args.args[0])
 
-                    backend.pii_lookup("what is my license number")
-                    self.assertNotIn("--reveal", run.call_args.args[0])
-            finally:
-                backend.PII_VAULT = previous
+            backend.pii_lookup("what is my license number")
+            self.assertNotIn("--reveal", run.call_args.args[0])
 
     def test_private_router_ignores_regular_personal_knowledge_questions(self):
         self.assertFalse(backend.should_use_private_vault("What projects have I worked on?"))
@@ -124,7 +118,7 @@ class PrivacyBoundaryTests(unittest.TestCase):
         self.assertTrue(result["toggles"]["webSearch"])
 
     def test_automatic_router(self):
-        self.assertEqual(backend.route_question("What did my partner say about the flight?")["id"], "local")
+        self.assertEqual(backend.route_question("What did Charvi say about the flight?")["id"], "local")
         self.assertEqual(backend.route_question("What do you know about me?")["id"], "local")
         self.assertEqual(backend.route_question("What is the latest Swift version?")["id"], "web")
         self.assertEqual(backend.route_question("Write a Python function to sort these values")["id"], "model")

@@ -1,31 +1,30 @@
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, MenuItem, nativeImage, session, shell, systemPreferences, Tray } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, MenuItem, session, shell, systemPreferences } = require('electron');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
-const fsSync = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 
-let backend = null, backendPort = null;
-let mlxServer = null, mlxPort = null;
-let quickWindow = null, mainWindow = null, loadingWindow = null;
-let imessageRefresh = null, reindexProcess = null, imessageTimer = null;
-let speechProcess = null, fnKeyMonitor = null, fnMonitorRestartTimer = null;
-let wakeWordProcess = null, wakeWordRestartTimer = null;
-let tray = null;
-let vaultWatcher = [];
-let watchDebounceTimer = null;
-let lastAutoIndexTime = null;
-let trayStatusText = '🟢 Ready';
+let backend = null;
+let mlxServer = null;
+let loadingWindow = null;
+let backendPort = null;
+let mlxPort = null;
+let reindexProcess = null;
+let imessageRefresh = null;
+let imessageTimer = null;
+let quickWindow = null;
+let mainWindow = null;
+let speechProcess = null;
+let fnKeyMonitor = null;
+let fnMonitorRestartTimer = null;
 let nativeShortcutDownAt = 0;
 let nativeShortcutHeld = false;
 let nativeHoldTimer = null;
 let fallbackShortcut = null;
 let lastNativeShortcutAt = 0;
 const backendToken = crypto.randomBytes(32).toString('hex');
-
-
 
 const MLX_SERVER = '/Users/vashishtdevasani/PersonalAIData/95_tools/venvs/mlx_lm/bin/mlx_lm.server';
 const MLX_MODEL = 'mlx-community/gemma-4-e4b-it-4bit';
@@ -57,11 +56,6 @@ function voiceTranscriberScript() {
 function fnKeyMonitorExecutable() {
   if (app.isPackaged) return path.join(process.resourcesPath, 'native', 'fn_key_monitor');
   return path.join(__dirname, 'native', 'fn_key_monitor');
-}
-
-function wakeWordScript() {
-  if (app.isPackaged) return path.join(process.resourcesPath, 'backend', 'wake_word.py');
-  return path.join(__dirname, 'backend', 'wake_word.py');
 }
 
 function ocrDocumentScript() {
@@ -161,32 +155,21 @@ async function localApi(route, options = {}) {
 
 function startReindex() {
   if (reindexProcess) return Promise.resolve({ started: false, state: 'already_running', message: 'The local indexer is already running.' });
-  updateTrayStatus('⚡ Auto-indexing vault...', 'Scanning modified files');
   return new Promise((resolve, reject) => {
     reindexProcess = spawn(SECOND_BRAIN, ['scan'], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     reindexProcess.stdout.on('data', (buffer) => { if (stdout.length < 1024 * 1024) stdout += buffer; });
     reindexProcess.stderr.on('data', (buffer) => { if (stderr.length < 256 * 1024) stderr += buffer; });
-    reindexProcess.on('error', (error) => {
-      reindexProcess = null;
-      updateTrayStatus('⚠️ Indexing error', error.message);
-      reject(error);
-    });
+    reindexProcess.on('error', (error) => { reindexProcess = null; reject(error); });
     reindexProcess.on('exit', (code) => {
       reindexProcess = null;
-      if (code !== 0) {
-        updateTrayStatus('⚠️ Indexing error', stderr.trim() || 'Failed');
-        return reject(new Error(stderr.trim() || 'The local indexer failed.'));
-      }
+      if (code !== 0) return reject(new Error(stderr.trim() || 'The local indexer failed.'));
       let details = {};
       try { details = JSON.parse(stdout.trim().split(/\r?\n/).filter(Boolean).at(-1) || '{}'); } catch (_) { details = {}; }
-      lastAutoIndexTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       if (details.state === 'already_running') {
-        updateTrayStatus('🟢 Ready', `Last indexed at ${lastAutoIndexTime}`);
         return resolve({ started: false, state: 'already_running', details, message: 'The local indexer is already running in the background.' });
       }
-      updateTrayStatus('🟢 Vault synchronized', `Indexed at ${lastAutoIndexTime}`);
       resolve({ started: true, state: details.state || 'complete', details, message: 'Local indexing completed.' });
     });
   });
@@ -195,148 +178,6 @@ function startReindex() {
 function queueReindex() {
   startReindex().catch((error) => console.error(`[local-indexer] ${error.message}`));
 }
-
-function getTrayIconPath() {
-  const iconName = 'trayTemplate.png';
-  if (app.isPackaged) {
-    const packagedPath = path.join(process.resourcesPath, 'assets', iconName);
-    if (fsSync.existsSync(packagedPath)) return packagedPath;
-  }
-  return path.join(__dirname, 'assets', iconName);
-}
-
-function setupTray() {
-  if (tray) return;
-  const iconPath = getTrayIconPath();
-  let image;
-  try {
-    image = nativeImage.createFromPath(iconPath);
-    image.setTemplateImage(true);
-  } catch (e) {
-    console.error(`[tray] Failed to load icon from ${iconPath}:`, e);
-    return;
-  }
-
-  tray = new Tray(image);
-  tray.setToolTip('Rishi Jarvis Assistant v5.4.0\n🟢 System Ready');
-
-  tray.on('click', () => {
-    toggleQuickWindow();
-  });
-
-  updateTrayStatus('🟢 Ready', lastAutoIndexTime ? `Last indexed ${lastAutoIndexTime}` : 'Background auto-indexing active');
-}
-
-function updateTrayStatus(statusTitle, detailMsg = '') {
-  if (!tray) return;
-  trayStatusText = statusTitle;
-  const tooltip = `Rishi Jarvis Assistant v5.4.0\n${statusTitle}${detailMsg ? ` · ${detailMsg}` : ''}`;
-  tray.setToolTip(tooltip);
-
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Rishi Jarvis Assistant v5.4.0', enabled: false },
-    { label: `${statusTitle}${detailMsg ? ` (${detailMsg})` : ''}`, enabled: false },
-    { type: 'separator' },
-    {
-      label: '💬 Open Quick Chat (⌘⇧Space)',
-      click: () => toggleQuickWindow()
-    },
-    {
-      label: '🧠 Open Main Application',
-      click: () => {
-        if (!mainWindow || mainWindow.isDestroyed()) createWindow();
-        else { mainWindow.show(); mainWindow.focus(); }
-      }
-    },
-    { type: 'separator' },
-    {
-      label: '⚡ Re-index Vault Now',
-      click: () => {
-        updateTrayStatus('⚡ Re-indexing vault...', 'Manual trigger');
-        startReindex().catch((err) => {
-          updateTrayStatus('⚠️ Indexing error', err.message);
-        });
-      }
-    },
-    {
-      label: '👁️ Auto-Watch Background Vault',
-      type: 'checkbox',
-      checked: vaultWatcher.length > 0,
-      click: (item) => {
-        if (item.checked) {
-          startVaultWatcher();
-          updateTrayStatus('🟢 Auto-watcher active', 'Monitoring /10_vault & /00_inbox');
-        } else {
-          stopVaultWatcher();
-          updateTrayStatus('⏸️ Auto-watcher paused', 'Manual indexing only');
-        }
-      }
-    },
-    { type: 'separator' },
-    {
-      label: '✕ Quit Rishi',
-      click: () => app.quit()
-    }
-  ]);
-
-  tray.setContextMenu(contextMenu);
-}
-
-function startVaultWatcher() {
-  stopVaultWatcher();
-  const watchDirs = [
-    '/Users/vashishtdevasani/PersonalAIData/10_vault',
-    '/Users/vashishtdevasani/PersonalAIData/00_inbox/continuous_documents',
-    '/Users/vashishtdevasani/Desktop',
-    '/Users/vashishtdevasani/Downloads'
-  ];
-
-  for (const dirPath of watchDirs) {
-    if (!fsSync.existsSync(dirPath)) continue;
-    try {
-      const watcher = fsSync.watch(dirPath, { recursive: true }, (eventType, filename) => {
-        if (!filename) return;
-        const basename = path.basename(filename);
-
-        if (
-          basename.startsWith('.') ||
-          basename.startsWith('~') ||
-          basename.endsWith('.tmp') ||
-          basename.endsWith('.crdownload') ||
-          basename.endsWith('.swp') ||
-          basename.endsWith('.lock') ||
-          filename.includes('.git') ||
-          filename.includes('node_modules')
-        ) return;
-
-        console.log(`[vault-watcher] Change detected (${eventType}): ${filename}`);
-        updateTrayStatus('⚡ File modified', `Changed: ${basename}`);
-
-        if (watchDebounceTimer) clearTimeout(watchDebounceTimer);
-        watchDebounceTimer = setTimeout(() => {
-          console.log('[vault-watcher] Triggering automatic background re-index...');
-          startReindex().catch((err) => {
-            console.error(`[vault-watcher] Background re-index failed: ${err.message}`);
-          });
-        }, 3000);
-      });
-      vaultWatcher.push(watcher);
-      console.log(`[vault-watcher] Watching ${dirPath} (recursive)`);
-    } catch (err) {
-      console.error(`[vault-watcher] Could not watch ${dirPath}: ${err.message}`);
-    }
-  }
-}
-
-function stopVaultWatcher() {
-  if (watchDebounceTimer) clearTimeout(watchDebounceTimer);
-  watchDebounceTimer = null;
-  for (const w of vaultWatcher) {
-    try { w.close(); } catch (_) {}
-  }
-  vaultWatcher = [];
-}
-
 
 function refreshMessages() {
   if (imessageRefresh) return;
@@ -519,10 +360,10 @@ function createWindow() {
 function createQuickWindow() {
   if (quickWindow && !quickWindow.isDestroyed()) return quickWindow;
   quickWindow = new BrowserWindow({
-    width: 440,
-    height: 72,
+    width: 460,
+    height: 104,
     minWidth: 380,
-    minHeight: 64,
+    minHeight: 80,
     maxHeight: 500,
     show: false,
     frame: false,
@@ -652,63 +493,6 @@ function startFnKeyMonitor() {
   });
 }
 
-// ── Rishi wake-word detector ────────────────────────────────────────────────
-function startWakeWord() {
-  if (wakeWordProcess || app.isQuitting) return;
-  wakeWordProcess = spawn(VOICE_PYTHON, [wakeWordScript()], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, PYTHONUNBUFFERED: '1' }
-  });
-
-  let buffered = '';
-  wakeWordProcess.stdout.on('data', (chunk) => {
-    buffered += chunk.toString();
-    const lines = buffered.split(/\r?\n/);
-    buffered = lines.pop() || '';
-    for (const line of lines) {
-      const t = line.trim();
-      if (!t) continue;
-      if (t === 'WAKE_WORD_DETECTED') {
-        console.log('[rishi] Wake word "Rishi" detected — opening Quick HUD');
-        const w = showQuickWindow();
-        w.webContents.send('quick-voice-start');
-      } else if (t.startsWith('WAKE_WORD_STATUS:')) {
-        console.log(`[rishi-wake] ${t.slice(17)}`);
-      } else if (t.startsWith('WAKE_WORD_ERROR:')) {
-        console.error(`[rishi-wake] Error: ${t.slice(16)}`);
-      } else if (t === 'WAKE_WORD_LISTENING') {
-        console.log('[rishi-wake] Listening for "Rishi"…');
-      }
-    }
-  });
-
-  wakeWordProcess.stderr.on('data', (buf) => {
-    const msg = buf.toString().trim();
-    // Only log non-MLX spam lines
-    if (msg && !msg.includes('UserWarning') && !msg.includes('MPS') && !msg.includes('deprecat')) {
-      console.error(`[vasi-wake] ${msg}`);
-    }
-  });
-
-  wakeWordProcess.on('error', (err) => console.error(`[vasi-wake] spawn error: ${err.message}`));
-  wakeWordProcess.on('exit', (code) => {
-    wakeWordProcess = null;
-    if (!app.isQuitting) {
-      if (code && code !== 0) console.error(`[vasi-wake] exited with ${code}`);
-      // Auto-restart after 5s in case of transient mic error
-      wakeWordRestartTimer = setTimeout(startWakeWord, 5000);
-    }
-  });
-}
-
-function pauseWakeWord() {
-  try { wakeWordProcess?.stdin?.write('PAUSE\n'); } catch (_) {}
-}
-
-function resumeWakeWord() {
-  try { wakeWordProcess?.stdin?.write('RESUME\n'); } catch (_) {}
-}
-
 function speakText(text) {
   if (speechProcess) speechProcess.kill('SIGTERM');
   const spoken = String(text || '').replace(/\[[IPMVW]\d+\]/g, '').slice(0, 12000).trim();
@@ -717,7 +501,6 @@ function speakText(text) {
   speechProcess.on('exit', () => { speechProcess = null; });
   return true;
 }
-
 
 function createLoadingWindow() {
   loadingWindow = new BrowserWindow({
@@ -795,8 +578,6 @@ app.whenReady().then(async () => {
   const backgroundLaunch = process.argv.includes('--background');
   if (!backgroundLaunch) createWindow();
   createQuickWindow();
-  setupTray();
-  startVaultWatcher();
   const shortcutRegistered = globalShortcut.register('Command+Shift+Space', fallbackShortcutSignal);
   if (!shortcutRegistered) console.error('Command-Shift-Space could not be registered');
   if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true, args: ['--background'] });
@@ -805,7 +586,6 @@ app.whenReady().then(async () => {
   // macOS Accessibility access is enabled.
   installQuickChatMenu();
   startFnKeyMonitor();
-  startWakeWord();   // Voice-invoke Quick HUD by saying "Vasi"
   refreshMessages();
   imessageTimer = setInterval(refreshMessages, 5 * 60 * 1000);
   app.on('activate', () => {
@@ -819,18 +599,14 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   app.isQuitting = true;
-  stopVaultWatcher();
-  if (tray) { tray.destroy(); tray = null; }
   if (backend) backend.kill('SIGTERM');
   if (mlxServer) mlxServer.kill('SIGTERM');
   if (imessageRefresh) imessageRefresh.kill('SIGTERM');
   if (reindexProcess) reindexProcess.kill('SIGTERM');
-  if (wakeWordProcess) wakeWordProcess.kill('SIGTERM');
   if (imessageTimer) clearInterval(imessageTimer);
   if (speechProcess) speechProcess.kill('SIGTERM');
   if (fnKeyMonitor) fnKeyMonitor.kill('SIGTERM');
   if (fnMonitorRestartTimer) clearTimeout(fnMonitorRestartTimer);
-  if (wakeWordRestartTimer) clearTimeout(wakeWordRestartTimer);
   if (nativeHoldTimer) clearTimeout(nativeHoldTimer);
   if (fallbackShortcut?.singleTimer) clearTimeout(fallbackShortcut.singleTimer);
   if (fallbackShortcut?.releaseTimer) clearTimeout(fallbackShortcut.releaseTimer);

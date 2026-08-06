@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -43,6 +44,55 @@ class LearningMemoryTests(unittest.TestCase):
     def test_training_queue_rejects_protected_content(self):
         with self.assertRaises(ValueError):
             SERVER.queue_training_example("My passport number is EXAMPLE123.")
+
+    def test_style_correction_is_immediately_retrievable(self):
+        old_feedback = SERVER.TRAINING_FEEDBACK
+        SERVER.TRAINING_FEEDBACK = SERVER.RUNTIME / "feedback.jsonl"
+        try:
+            result = SERVER.save_style_correction(
+                "Are you coming this weekend?", "Yes, I will come this weekend.",
+                "Ha vasta le ee weekend", "charvi",
+            )
+            self.assertTrue(result["saved"])
+            matches = SERVER.style_correction_matches("Will you come this weekend?", "charvi")
+            self.assertEqual(matches[0]["corrected_response"], "Ha vasta le ee weekend")
+            self.assertEqual(SERVER.style_correction_matches("Will you come this weekend?", "friend"), [])
+        finally:
+            SERVER.TRAINING_FEEDBACK = old_feedback
+
+    def test_style_correction_rejects_protected_content(self):
+        with self.assertRaises(ValueError):
+            SERVER.save_style_correction(
+                "What is my passport number?", "I do not know.", "It is EXAMPLE123.", "self"
+            )
+
+    def test_telugu_english_interview_updates_local_grammar_examples(self):
+        old_feedback = SERVER.TRAINING_FEEDBACK
+        SERVER.TRAINING_FEEDBACK = SERVER.RUNTIME / "language-feedback.jsonl"
+        try:
+            progress = SERVER.save_language_sample("future_later", "Tarvatha chesta le ippudu busy ga unna")
+            self.assertEqual(progress["answered"], 1)
+            examples = SERVER.language_grammar_examples()
+            self.assertEqual(examples[0]["response"], "Tarvatha chesta le ippudu busy ga unna")
+            self.assertTrue(SERVER.TRAINING_FEEDBACK.exists())
+        finally:
+            SERVER.TRAINING_FEEDBACK = old_feedback
+
+    def test_telugu_english_interview_preserves_alternatives_as_variants(self):
+        old_feedback = SERVER.TRAINING_FEEDBACK
+        SERVER.TRAINING_FEEDBACK = SERVER.RUNTIME / "variant-feedback.jsonl"
+        try:
+            SERVER.save_language_sample("present_what", "Em chesthunnav (or) Enna Panra")
+            examples = SERVER.language_grammar_examples()
+            self.assertEqual(examples[0]["response"], "Em chesthunnav")
+            records = [json.loads(line) for line in SERVER.TRAINING_FEEDBACK.read_text().splitlines()]
+            self.assertEqual([item["messages"][1]["content"] for item in records], ["Em chesthunnav", "Enna Panra"])
+        finally:
+            SERVER.TRAINING_FEEDBACK = old_feedback
+
+    def test_telugu_english_interview_rejects_protected_answer(self):
+        with self.assertRaises(ValueError):
+            SERVER.save_language_sample("future_later", "My passport number is EXAMPLE123")
 
 
 if __name__ == "__main__":
