@@ -17,6 +17,8 @@ const state = {
   silenceTimer: null, lastSoundAt: 0, peakEnergy: 0,
   imageAttachments: [],
   isExpanded: false,
+  activeRequestId: 0,
+  closing: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -208,6 +210,7 @@ async function ask(text) {
   }
 
   state.busy = true;
+  const currentReqId = ++state.activeRequestId;
   if (send) send.disabled = true;
   if (mic) mic.disabled = true;
   if (prompt) prompt.value = '';
@@ -218,12 +221,9 @@ async function ask(text) {
   showStatus('Rishi is thinking…');
   setOrbState('thinking');
 
-  state.currentFetchController = new AbortController();
-
   try {
     const payload = await window.brain.api('/api/chat', {
       method: 'POST',
-      signal: state.currentFetchController.signal,
       body: JSON.stringify({
         message: text,
         conversationId: state.conversationId,
@@ -233,6 +233,10 @@ async function ask(text) {
         imageAttachments: currentImages
       }),
     });
+    if (currentReqId !== state.activeRequestId || state.closing) {
+      // Request was cancelled or window closed while thinking
+      return;
+    }
     if (payload.conversationId) state.conversationId = payload.conversationId;
     if (answerText) answerText.textContent = payload.message;
 

@@ -1,7 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('brain', {
-  api: (route, options = {}) => ipcRenderer.invoke('local-api', route, options),
+  api: (route, options = {}) => {
+    const { signal, ...safeOptions } = options;
+    return ipcRenderer.invoke('local-api', route, safeOptions);
+  },
   runIndexer: () => ipcRenderer.invoke('run-indexer'),
   exportGraphState: () => ipcRenderer.invoke('export-graph-state'),
   importGraphState: () => ipcRenderer.invoke('import-graph-state'),
