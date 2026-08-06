@@ -1,7 +1,7 @@
 {
   "name": "vashisht-devasani",
   "productName": "Vashisht Devasani",
-  "version": "5.4.0",
+  "version": "6.0.0",
   "description": "Local-first personal intelligence with live web retrieval for macOS",
   "main": "main.js",
   "author": "Vashisht Devasani",

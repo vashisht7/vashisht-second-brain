@@ -845,11 +845,32 @@ def pii_lookup(query):
     return json.loads(result.stdout)
 
 
-def format_protected_answer(facts):
-    """Render verified vault facts deterministically with exact unmasked values."""
+def calculate_age_from_dob(dob_str):
+    """Deterministically calculate exact current age from DOB string YYYY-MM-DD or MM/DD/YYYY."""
+    try:
+        dt_obj = None
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%B %d, %Y", "%b %d, %Y"):
+            try:
+                dt_obj = datetime.strptime(dob_str.strip(), fmt).date()
+                break
+            except Exception:
+                pass
+        if not dt_obj:
+            return None
+        today = datetime.now().date()
+        age = today.year - dt_obj.year - ((today.month, today.day) < (dt_obj.month, dt_obj.day))
+        return age
+    except Exception:
+        return None
+
+
+def format_protected_answer(facts, query=""):
+    """Render verified vault facts deterministically with exact unmasked values and dynamic math (e.g. age from DOB)."""
     labels = {
         "driver_license_number": "driver’s license number",
         "driver_license_expiration": "driver’s license expiration",
+        "date_of_birth": "date of birth",
+        "dob": "date of birth",
         "passport_number": "passport number",
         "passport_expiration": "passport expiration",
         "i94_record_number": "I-94 record number",
@@ -858,16 +879,30 @@ def format_protected_answer(facts):
         "h1b_petition_expiration": "H-1B petition expiration",
         "ssn": "Social Security number",
     }
+
+    norm_query = query.lower()
+    asking_for_age = any(term in norm_query for term in ("age", "how old", "years old"))
+
     if not facts:
         return "I couldn’t find a matching protected fact. Add the authoritative document to the protected vault for verification."
     lines = []
     for index, fact in enumerate(facts, 1):
-        label = labels.get(fact.get("field"), str(fact.get("field") or "protected fact").replace("_", " "))
+        field = fact.get("field", "")
+        val = fact.get("value")
+        label = labels.get(field, str(field or "protected fact").replace("_", " "))
         status = fact.get("verification_status")
-        if status != "current_verified" or fact.get("value") is None:
+        if status != "current_verified" or val is None:
             reason = fact.get("reason") or "The current value has not been verified from an authoritative dated document."
             lines.append(f"I can’t provide a verified current {label}. {reason}")
             continue
+
+        # If user is asking for age and field is date_of_birth or value looks like date
+        if asking_for_age or field in {"date_of_birth", "dob"}:
+            age = calculate_age_from_dob(str(val))
+            if age is not None:
+                lines.append(f"Based on your verified date of birth ({val}) in your official records, you are {age} years old today. [V{index}]")
+                continue
+
         source = fact.get("source") or {}
         provenance = source.get("label", "authoritative protected document")
         document_date = fact.get("document_date") or source.get("document_date")
@@ -880,7 +915,7 @@ def format_protected_answer(facts):
         if fact.get("cross_verified"):
             details.append("cross-checked against another matching source")
         suffix = f" ({'; '.join(details)})" if details else ""
-        lines.append(f"Your {label} is {fact.get('value')}. Verified from {provenance}{suffix}. [V{index}]")
+        lines.append(f"Your {label} is {val}. Verified from {provenance}{suffix}. [V{index}]")
     return "\n\n".join(lines)
 
 
@@ -890,12 +925,15 @@ def should_use_private_vault(query):
     protected_terms = (
         "passport", "i-94", "i94", "i-797", "i797", "h1b", "h-1b", "visa",
         "driver license", "driving license", "license number", "licence number", "ssn",
-        "social security", "alien number", "uscis number", "date of birth", "personal information",
+        "social security", "alien number", "uscis number", "date of birth", "dob", "birth date",
+        "how old", "my age", "personal information",
     )
     protected_patterns = (
-        r"\bmy\s+(?:full\s+|exact\s+)?(?:passport|visa|license|licence|i-?94|i-?797|ssn)\b",
-        r"\b(?:when does|when will|what is)\s+my\s+.*(?:expire|expiry|expiration|end date)\b",
-        r"\bmy\s+.*(?:number|expiry|expiration|status)\b",
+        r"\bmy\s+(?:full\s+|exact\s+)?(?:passport|visa|license|licence|i-?94|i-?797|ssn|age|dob|birth(?:day)?)\b",
+        r"\b(?:when does|when will|what is)\s+my\s+.*(?:expire|expiry|expiration|end date|age|dob)\b",
+        r"\bhow\s+old\s+am\s+i\b",
+        r"\bwhat\s+is\s+my\s+age\b",
+        r"\bmy\s+.*(?:number|expiry|expiration|status|dob|age)\b",
     )
     return any(term in normalized for term in protected_terms) or any(
         re.search(pattern, normalized) for pattern in protected_patterns
@@ -1181,7 +1219,7 @@ def chat(payload):
             )
             sources.append({"label": source.get("label", "Protected vault"), "kind": "vault", "locator": source.get("page")})
 
-        response = format_protected_answer(facts)
+        response = format_protected_answer(facts, question)
         audit("chat", toggles, audience, "verified_vault_response")
         # Return the existing opaque conversation identifier so the UI keeps the
         # surrounding chat context. The protected question and answer themselves

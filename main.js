@@ -218,7 +218,7 @@ function setupTray() {
   }
 
   tray = new Tray(image);
-  tray.setToolTip('Rishi Jarvis Assistant v5.4.0\n🟢 System Ready');
+  tray.setToolTip('Rishi Assistant v6.0.0\n🟢 System Ready');
 
   tray.on('click', () => {
     toggleQuickWindow();
@@ -230,11 +230,11 @@ function setupTray() {
 function updateTrayStatus(statusTitle, detailMsg = '') {
   if (!tray) return;
   trayStatusText = statusTitle;
-  const tooltip = `Rishi Jarvis Assistant v5.4.0\n${statusTitle}${detailMsg ? ` · ${detailMsg}` : ''}`;
+  const tooltip = `Rishi Assistant v6.0.0\n${statusTitle}${detailMsg ? ` · ${detailMsg}` : ''}`;
   tray.setToolTip(tooltip);
 
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Rishi Jarvis Assistant v5.4.0', enabled: false },
+    { label: 'Rishi Assistant v6.0.0', enabled: false },
     { label: `${statusTitle}${detailMsg ? ` (${detailMsg})` : ''}`, enabled: false },
     { type: 'separator' },
     {

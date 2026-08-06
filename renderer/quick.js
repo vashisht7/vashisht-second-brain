@@ -33,13 +33,13 @@ const expandToggleBtn = $('expandToggleBtn');
 /* ── Stop Intent Helper ────────────────────────────────────── */
 function isStopIntent(text) {
   const norm = (text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
-  const stopPhrases = [
-    'thats it', 'that is it', 'thats all', 'that is all', 'no', 'nope',
-    'nothing else', 'no thanks', 'no thank you', 'stop', 'bye', 'goodbye',
-    'im good', 'i am good', 'done', 'thats everything', 'all set', 'exit',
-    'no thats it', 'no that is all', 'nothing', 'close'
+  const stopKeywords = [
+    'stop', 'thats it', 'that is it', 'thats all', 'that is all', 'no', 'nope',
+    'nothing else', 'no thanks', 'no thank you', 'bye', 'goodbye', 'cancel', 'quit',
+    'shut up', 'quiet', 'nevermind', 'never mind', 'im good', 'i am good', 'done',
+    'thats everything', 'all set', 'exit', 'close', 'nothing'
   ];
-  return stopPhrases.includes(norm) || stopPhrases.some(p => norm.startsWith(p) && norm.length <= p.length + 6);
+  return stopKeywords.some(kw => norm.includes(kw));
 }
 
 /* ── Window resize & Mode helpers ──────────────────────────── */
@@ -355,24 +355,22 @@ async function stopRecording() {
     const result = await window.brain.transcribeAudio(wav(samples), 'audio/wav');
     const text = (result?.text || '').trim();
     if (!text) {
-      showStatus('Listening for "Hey Rishi"…');
+      state.closing = true;
+      showStatus('Signing off…');
       setOrbState('idle');
+      window.brain.hideQuickWindow();
+      state.closing = false;
       return;
     }
     if (prompt) prompt.value = text;
     showStatus(`Understood: "${text}"`);
     await ask(text);
   } catch (error) {
-    const isNoSpeech = error.name === 'NoSpeechError' ||
-                       error.message?.includes('speech') ||
-                       error.message?.includes('empty') ||
-                       error.message?.includes('No audio');
-    if (isNoSpeech) {
-      showStatus('Listening for "Hey Rishi"…');
-    } else {
-      showStatus(`Error: ${error.message}`);
-    }
+    state.closing = true;
+    showStatus('Signing off…');
     setOrbState('idle');
+    window.brain.hideQuickWindow();
+    state.closing = false;
   } finally {
     if (mic) {
       mic.classList.remove('processing');
