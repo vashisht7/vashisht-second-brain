@@ -1,4 +1,4 @@
-# Vashisht Devasani — Second Brain 4.1.0
+# Vashisht Devasani — Second Brain 5.0
 
 A private Mac chat application backed by a locally trained Gemma 4 E4B style adapter and a source-grounded personal index.
 
