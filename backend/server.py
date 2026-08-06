@@ -229,6 +229,101 @@ def retrieve(query):
     return json.loads(result.stdout)[:8]
 
 
+def extract_text_from_local_file(path):
+    p = Path(path)
+    if not p.is_file():
+        return ""
+    ext = p.suffix.lower()
+    try:
+        if ext in {".txt", ".md", ".csv", ".json", ".yaml", ".py", ".js", ".html", ".css", ".log"}:
+            return p.read_text(errors="ignore")[:30_000]
+        elif ext == ".pdf":
+            res = subprocess.run(["pdftotext", str(p), "-"], capture_output=True, text=True, timeout=15)
+            return res.stdout[:30_000] if res.returncode == 0 else ""
+        elif ext == ".docx":
+            res = subprocess.run(["python3", "-c", f"import docx; d=docx.Document(r'{p}'); print('\\n'.join(x.text for x in d.paragraphs))"], capture_output=True, text=True, timeout=15)
+            return res.stdout[:30_000] if res.returncode == 0 else ""
+        elif ext == ".rtf":
+            res = subprocess.run(["textutil", "-convert", "txt", "-stdout", str(p)], capture_output=True, text=True, timeout=15)
+            return res.stdout[:30_000] if res.returncode == 0 else ""
+    except Exception:
+        pass
+    return ""
+
+
+def fuzzy_find_laptop_files(query):
+    """
+    Scans Desktop, Downloads, Documents, and PersonalAIData for files matching partial/half names in query.
+    e.g. query: "summarize love letter doc on desktop" -> matches ~/Desktop/love_letter.docx
+    """
+    normalized_q = query.lower()
+    file_keywords = (
+        "desktop", "downloads", "documents", "file", "folder", "doc", "document",
+        "pdf", "txt", "docx", "notes", "summarize", "read", "check", "find", "open", "letter"
+    )
+    if not any(k in normalized_q for k in file_keywords):
+        return []
+
+    search_dirs = [
+        Path("/Users/vashishtdevasani/Desktop"),
+        Path("/Users/vashishtdevasani/Downloads"),
+        Path("/Users/vashishtdevasani/Documents"),
+        Path("/Users/vashishtdevasani/PersonalAIData/10_raw_immutable"),
+        Path("/Users/vashishtdevasani/PersonalAIData/00_inbox"),
+        Path("/Users/vashishtdevasani/PersonalAIData/20_normalized"),
+    ]
+
+    stop_words = {
+        "summarize", "summary", "read", "the", "doc", "document", "file", "on", "my",
+        "desktop", "downloads", "documents", "is", "there", "for", "me", "a", "an",
+        "in", "folder", "can", "you", "please", "what", "where", "how", "about", "tell", "it"
+    }
+    words = re.findall(r"\b[a-z0-9_-]+\b", normalized_q)
+    query_tokens = [w for w in words if w not in stop_words and len(w) > 1]
+
+    if not query_tokens:
+        return []
+
+    query_phrase = " ".join(query_tokens)
+    matched_files = []
+    seen_paths = set()
+
+    for sdir in search_dirs:
+        if not sdir.exists():
+            continue
+        try:
+            for p in sdir.rglob("*"):
+                if not p.is_file():
+                    continue
+                if p.name.startswith(".") or "/." in str(p) or "node_modules" in str(p):
+                    continue
+
+                stem_lower = p.stem.lower()
+
+                match_score = 0
+                if query_phrase and query_phrase in stem_lower:
+                    match_score = 100
+                elif any(token in stem_lower for token in query_tokens):
+                    matched_toks = sum(1 for token in query_tokens if token in stem_lower)
+                    match_score = (matched_toks / len(query_tokens)) * 80
+
+                if match_score >= 50 and str(p) not in seen_paths:
+                    seen_paths.add(str(p))
+                    text = extract_text_from_local_file(p)
+                    if text.strip():
+                        matched_files.append({
+                            "path": str(p),
+                            "name": p.name,
+                            "score": match_score,
+                            "text": text
+                        })
+        except Exception:
+            continue
+
+    matched_files.sort(key=lambda x: x["score"], reverse=True)
+    return matched_files[:3]
+
+
 def normalized_memory_key(value):
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value).casefold())).strip()
 
@@ -1013,6 +1108,7 @@ def chat(payload):
             "Copy grammar, transliteration habits, sentence structure, and code-switch placement only—not emotional tone or facts."
         )
     if toggles["personalKnowledge"]:
+        # 1. Standard vector retrieve
         for index, item in enumerate(retrieve(question), 1):
             source = {
                 "label": item.get("title") or Path(item["path"]).name,
@@ -1020,6 +1116,22 @@ def chat(payload):
             }
             sources.append(source)
             context_blocks.append(f"[P{index}] {source['label']}\nSource: {source['path']} ({source['locator']})\n{item['text'][:1800]}")
+
+        # 2. Direct Fuzzy Laptop File Search (Desktop, Downloads, Documents, PersonalAIData)
+        fuzzy_files = fuzzy_find_laptop_files(question)
+        for index, fitem in enumerate(fuzzy_files, 1):
+            source = {
+                "label": fitem["name"],
+                "path": fitem["path"],
+                "locator": "fuzzy file match",
+                "kind": "desktop_file"
+            }
+            if not any(s.get("path") == fitem["path"] for s in sources):
+                sources.append(source)
+                context_blocks.append(
+                    f"[FILE{index}] {fitem['name']}\nPath: {fitem['path']}\n"
+                    f"Direct File Content:\n{fitem['text'][:4000]}"
+                )
 
     if toggles["privateVault"]:
         facts = pii_lookup(question)

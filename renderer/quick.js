@@ -227,11 +227,23 @@ async function ask(text) {
     if (payload.conversationId) state.conversationId = payload.conversationId;
     if (answerText) answerText.textContent = payload.message;
 
+    let spokenMessage = payload.message || '';
+    if (!spokenMessage.toLowerCase().includes('anything else')) {
+      spokenMessage += ' Anything else?';
+    }
+
     showStatus('Rishi responding…');
     setOrbState('speaking');
-    await window.brain.speakText(payload.message);
+    await window.brain.speakText(spokenMessage);
     setOrbState('idle');
-    showStatus('Ready · Say "Hey Rishi" anytime');
+    showStatus('Listening for follow-up… (or say "That\'s it")');
+
+    // Auto re-arm microphone recording for continuous voice conversation loop
+    setTimeout(() => {
+      if (!state.recording && !state.busy) {
+        startRecording();
+      }
+    }, 500);
 
   } catch (error) {
     if (answerText) answerText.textContent = `Error: ${error.message}`;
