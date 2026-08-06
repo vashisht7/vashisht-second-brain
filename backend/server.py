@@ -864,8 +864,8 @@ def calculate_age_from_dob(dob_str):
         return None
 
 
-def format_protected_answer(facts, query=""):
-    """Render verified vault facts deterministically with exact unmasked values and dynamic math (e.g. age from DOB)."""
+def format_protected_answer(facts, query="", mode="voice"):
+    """Render verified vault facts concisely and directly without citation noise."""
     labels = {
         "driver_license_number": "driver’s license number",
         "driver_license_expiration": "driver’s license expiration",
@@ -884,7 +884,8 @@ def format_protected_answer(facts, query=""):
     asking_for_age = any(term in norm_query for term in ("age", "how old", "years old"))
 
     if not facts:
-        return "I couldn’t find a matching protected fact. Add the authoritative document to the protected vault for verification."
+        return "I couldn’t find a matching protected fact in your vault."
+
     lines = []
     for index, fact in enumerate(facts, 1):
         field = fact.get("field", "")
@@ -892,33 +893,19 @@ def format_protected_answer(facts, query=""):
         label = labels.get(field, str(field or "protected fact").replace("_", " "))
         status = fact.get("verification_status")
         if status != "current_verified" or val is None:
-            reason = fact.get("reason") or "The current value has not been verified from an authoritative dated document."
+            reason = fact.get("reason") or "The current value has not been verified."
             lines.append(f"I can’t provide a verified current {label}. {reason}")
             continue
 
-        # If field is date_of_birth, compute current age and provide both DOB and age
-        if field in {"date_of_birth", "dob"}:
+        if asking_for_age or field in {"date_of_birth", "dob"}:
             age = calculate_age_from_dob(str(val))
-            age_str = f" As of today, you are {age} years old." if age is not None else ""
-            source = fact.get("source") or {}
-            provenance = source.get("label", "authoritative protected document")
-            lines.append(f"Your verified date of birth is {val}.{age_str} Verified from {provenance}. [V{index}]")
+            age_str = f" and you are {age} years old today." if age is not None else "."
+            lines.append(f"Your date of birth is {val}{age_str}")
             continue
 
-        source = fact.get("source") or {}
-        provenance = source.get("label", "authoritative protected document")
-        document_date = fact.get("document_date") or source.get("document_date")
-        verified_on = fact.get("verified_on")
-        details = []
-        if document_date:
-            details.append(f"document date {document_date}")
-        if verified_on:
-            details.append(f"verified {verified_on}")
-        if fact.get("cross_verified"):
-            details.append("cross-checked against another matching source")
-        suffix = f" ({'; '.join(details)})" if details else ""
-        lines.append(f"Your {label} is {val}. Verified from {provenance}{suffix}. [V{index}]")
-    return "\n\n".join(lines)
+        lines.append(f"Your {label} is {val}.")
+
+    return "\n".join(lines)
 
 
 def should_use_private_vault(query):

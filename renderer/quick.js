@@ -237,26 +237,38 @@ async function ask(text) {
       // Request was cancelled or window closed while thinking
       return;
     }
-    if (payload.conversationId) state.conversationId = payload.conversationId;
-    if (answerText) answerText.textContent = payload.message;
+    const rawMsg = payload.message || '';
+    if (answerText) answerText.textContent = rawMsg;
+    if (answer) answer.hidden = false;
 
-    let spokenMessage = payload.message || '';
-    if (!spokenMessage.toLowerCase().includes('anything else')) {
-      spokenMessage += ' Anything else?';
+    // Auto-expand panel if message is long (> 5 lines or > 300 characters)
+    const lineCount = rawMsg.split(/\r?\n/).length;
+    if (lineCount > 5 || rawMsg.length > 300) {
+      setExpandedMode(true);
     }
+
+    // Clean speech: strip citations like [V1], [P1], "Verified from..." for direct clean voice
+    let spokenMessage = rawMsg
+      .replace(/\[[A-Z0-9]+\]/g, '')
+      .replace(/Verified from.*$/gi, '')
+      .trim();
 
     showStatus('Rishi responding…');
     setOrbState('speaking');
     await window.brain.speakText(spokenMessage);
     setOrbState('idle');
-    showStatus('Listening for follow-up… (or say "That\'s it")');
 
-    // Auto re-arm microphone recording for continuous voice conversation loop
-    setTimeout(() => {
+    // Auto-close after 5s if user doesn't interact or speak
+    showStatus('Standing by (closing in 5s)…');
+    if (state.autoCloseTimer) clearTimeout(state.autoCloseTimer);
+    state.autoCloseTimer = setTimeout(() => {
       if (!state.recording && !state.busy) {
-        startRecording();
+        state.closing = true;
+        resetAudio();
+        window.brain.hideQuickWindow();
+        state.closing = false;
       }
-    }, 500);
+    }, 5000);
 
   } catch (error) {
     if (answerText) answerText.textContent = `Error: ${error.message}`;
@@ -403,6 +415,10 @@ if (orbBar) {
 if (expandToggleBtn) {
   expandToggleBtn.onclick = (e) => {
     e.stopPropagation();
+    if (state.autoCloseTimer) {
+      clearTimeout(state.autoCloseTimer);
+      state.autoCloseTimer = null;
+    }
     setExpandedMode(!state.isExpanded);
   };
 }
