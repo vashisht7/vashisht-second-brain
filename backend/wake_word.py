@@ -178,6 +178,22 @@ def main():
     last_periodic = time.monotonic()
     total_voiced_since_periodic = 0
 
+    def is_rishi_match(text):
+        clean_t = text.lower().replace('.', '').replace(',', '').replace('?', '').replace('!', '').strip()
+        words = clean_t.split()
+        wake_phrases = [
+            'rishi', 'reeshi', 'richie', 'richy', 'rishie', 'reshi', 'rushi',
+            'hey rishi', 'hi rishi', 'hey reeshi', 'hey richie', 'hey richy',
+            'hey receive', 'hey reach', 'hey rachel', 'did you see', 'you see',
+            'hey ratio', 'hey rushi', 'hey reshi', 'hey ready', 'hey reachy'
+        ]
+        if any(p in clean_t for p in wake_phrases):
+            return True
+        for w in words:
+            if (w.startswith('r') and ('sh' in w or 'ch' in w or 'si' in w or 'ci' in w)) or w in ['rishi', 'reeshi', 'richie', 'richy', 'rish']:
+                return True
+        return False
+
     def _check_wake(audio_segment):
         """Transcribe audio and check for wake phrase. Returns True if matched."""
         nonlocal last_wake
@@ -185,14 +201,9 @@ def main():
         if now - last_wake < COOLDOWN_SEC:
             return False
 
-        # Verify segment has meaningful energy before transcribing
-        seg_rms = float(np.sqrt(np.mean(audio_segment ** 2)))
-        if seg_rms < MIN_ENERGY * 0.8:
-            return False
-
         try:
             text = transcribe(audio_segment)
-            if not text or len(text.strip()) < 3:
+            if not text or len(text.strip()) < 2:
                 return False
 
             # Filter out Whisper hallucinations (repetitive single-word outputs)
@@ -202,10 +213,7 @@ def main():
 
             _log(f"WAKE_WORD_STATUS:Heard → \"{text}\"")
 
-            norm_text = text.lower().strip()
-            # Match explicit wake phrases or rishi/reeshi word
-            matched = any(phrase in norm_text for phrase in WAKE_PHRASES) or "rishi" in norm_text or "reeshi" in norm_text
-            if matched:
+            if is_rishi_match(text):
                 last_wake = now
                 print("WAKE_WORD_DETECTED", flush=True)
                 _log("WAKE_WORD_STATUS:✅ 'Hey Rishi' detected!")
