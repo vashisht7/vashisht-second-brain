@@ -69,28 +69,30 @@ def _find_transcribe():
     try:
         import mlx_whisper
 
-        for repo in [
-            "mlx-community/whisper-tiny",
-            "mlx-community/whisper-base",
-            "mlx-community/whisper-large-v3-turbo",
-        ]:
-            try:
-                import numpy as np
-                _log(f"WAKE_WORD_STATUS:Loading model {repo}…")
-                test = np.zeros(8000, dtype=np.float32)
-                mlx_whisper.transcribe(test, path_or_hf_repo=repo, verbose=False)
-                _log(f"WAKE_WORD_STATUS:Model loaded: {repo} ✓")
+        repo = "mlx-community/whisper-tiny"
+        try:
+            import numpy as np
+            _log(f"WAKE_WORD_STATUS:Loading model {repo}…")
+            test = np.zeros(8000, dtype=np.float32)
+            mlx_whisper.transcribe(test, path_or_hf_repo=repo, language="en", initial_prompt="Hey Rishi, Rishi.", verbose=False)
+            _log(f"WAKE_WORD_STATUS:Model loaded: {repo} ✓")
 
-                def _t(audio, _repo=repo):
-                    r = mlx_whisper.transcribe(
-                        audio, path_or_hf_repo=_repo,
-                        verbose=False, language="en",
-                    )
-                    return r.get("text", "").lower().strip()
-                return _t
-            except Exception as e:
-                _log(f"WAKE_WORD_STATUS:Model {repo} failed: {e}")
-                continue
+            def _t(audio):
+                # Gain normalization: amplify soft/far-field voices to studio level
+                max_amp = float(np.max(np.abs(audio)))
+                if max_amp > 0.0005:
+                    audio_norm = (audio / max_amp * 0.95).astype(np.float32)
+                else:
+                    audio_norm = audio
+                r = mlx_whisper.transcribe(
+                    audio_norm, path_or_hf_repo=repo,
+                    language="en", initial_prompt="Hey Rishi, Rishi, wake up.",
+                    verbose=False,
+                )
+                return r.get("text", "").lower().strip()
+            return _t
+        except Exception as e:
+            _log(f"WAKE_WORD_STATUS:Model {repo} failed: {e}")
     except ImportError:
         pass
 
@@ -118,18 +120,15 @@ def main():
     try:
         import sounddevice as sd
         import numpy as np
-        import scipy.signal
     except ImportError as e:
         _log(f"WAKE_WORD_ERROR:Missing dependency: {e}")
         sys.exit(1)
 
     try:
         dev = sd.query_devices(kind="input")
-        native_sr = int(dev.get("default_samplerate", 44100))
-        _log(f"WAKE_WORD_STATUS:Mic: {dev['name']} (native_sr={native_sr})")
+        _log(f"WAKE_WORD_STATUS:Mic: {dev['name']} (sr={dev['default_samplerate']})")
     except Exception:
-        native_sr = 44100
-        _log("WAKE_WORD_STATUS:Could not query input device, using 44100")
+        _log("WAKE_WORD_STATUS:Could not query input device")
 
     transcribe = _find_transcribe()
     if not transcribe:
@@ -140,15 +139,10 @@ def main():
 
     # ── Phase 1: Calibrate ambient noise ────────────────────────────
     _log("WAKE_WORD_STATUS:Calibrating ambient noise (1.5s)… stay quiet")
-    cal_samples = int(native_sr * CALIBRATION_SEC)
-    cal_audio = sd.rec(cal_samples, samplerate=native_sr, channels=1, dtype="float32")
+    cal_samples = int(SAMPLE_RATE * CALIBRATION_SEC)
+    cal_audio = sd.rec(cal_samples, samplerate=SAMPLE_RATE, channels=1, dtype="float32")
     sd.wait()
     cal_flat = cal_audio[:, 0]
-
-    # Resample calibration audio to 16kHz
-    if native_sr != SAMPLE_RATE:
-        num_target = int(len(cal_flat) * SAMPLE_RATE / native_sr)
-        cal_flat = scipy.signal.resample(cal_flat, num_target).astype(np.float32)
 
     # Compute RMS per chunk, then take the 90th percentile as noise floor
     rms_values = []
@@ -168,21 +162,13 @@ def main():
     audio_q: _queue.Queue = _queue.Queue(maxsize=1000)
     last_audio_time = time.monotonic()
 
-    native_chunk_samples = int(native_sr * CHUNK_MS / 1000)
-
     def _sd_callback(indata, frames, time_info, status):
         nonlocal last_audio_time
         last_audio_time = time.monotonic()
         if status:
             _log(f"WAKE_WORD_STATUS:Audio status: {status}")
         if not _paused:
-            raw_chunk = indata[:, 0].astype(np.float32).copy()
-            if native_sr != SAMPLE_RATE:
-                target_len = int(len(raw_chunk) * SAMPLE_RATE / native_sr)
-                resampled_chunk = scipy.signal.resample(raw_chunk, target_len).astype(np.float32)
-            else:
-                resampled_chunk = raw_chunk
-            audio_q.put(resampled_chunk)
+            audio_q.put(indata[:, 0].astype(np.float32).copy())
 
     ring       = np.zeros(WINDOW_SAMPLES, dtype=np.float32)
     ring_pos   = 0
