@@ -36,16 +36,16 @@ CHUNK_SAMPLES  = int(SAMPLE_RATE * CHUNK_MS / 1000)      # 1280
 WINDOW_SEC     = 2.5                                     # ring buffer length
 WINDOW_SAMPLES = int(SAMPLE_RATE * WINDOW_SEC)           # 40000
 
-# Adaptive VAD parameters — tuned for high far-field & soft voice sensitivity
-NOISE_MULTIPLIER = 1.15  # speech only needs to be 15% louder than ambient floor
-MIN_ENERGY       = 0.0006 # capture soft whispers and faraway voices
-MIN_SPEECH       = 2     # 2 voiced chunks (~160ms) to catch quiet utterances
-MAX_SILENCE      = 5     # 5 silent chunks (~400ms) to transcribe quickly
+# Adaptive VAD parameters — calibrated for accurate human voice, rejecting background noise
+NOISE_MULTIPLIER = 1.8   # speech must be 80% louder than ambient noise floor
+MIN_ENERGY       = 0.0045 # ignore ambient fan hiss, breaths, and keyboard clicks
+MIN_SPEECH       = 4     # at least 4 voiced chunks (~320ms) matching 'Hey Rishi' utterance
+MAX_SILENCE      = 5     # 5 silent chunks (~400ms) to transcribe after speech ends
 CALIBRATION_SEC  = 1.5   # calibrate ambient noise floor at startup
-COOLDOWN_SEC     = 1.5   # 1.5s cooldown after trigger
+COOLDOWN_SEC     = 2.5   # 2.5s cooldown after trigger
 
-# Periodic fallback: transcribe every PERIODIC_SEC seconds if there's speech
-PERIODIC_SEC     = 2.5
+# Periodic fallback: transcribe every PERIODIC_SEC seconds only if speech is sustained
+PERIODIC_SEC     = 4.5
 
 WAKE_PHRASES = [
     "hey rishi", "hi rishi", "hey reeshi", "hey richi", "hay rishi",
@@ -53,8 +53,7 @@ WAKE_PHRASES = [
     "hey richie", "hey rishee", "hei rishi", "hey rushi", "he rishi",
     "hey reche", "hey rachy", "hey reishi", "hey reesha", "hey reshi",
     "hey rishi.", "hey, rishi", "hey rishi!", "hey-rishi",
-    "hi rish", "hey receive", "hey reach", "hey rachel",
-    "rishi", "reeshi", "richi", "rishie", "richy", "richie", "reshi",
+    "hi rish", "rishi", "reeshi", "richi", "rishie", "richy", "richie"
 ]
 
 _paused = False
@@ -74,19 +73,19 @@ def _find_transcribe():
             import numpy as np
             _log(f"WAKE_WORD_STATUS:Loading model {repo}…")
             test = np.zeros(8000, dtype=np.float32)
-            mlx_whisper.transcribe(test, path_or_hf_repo=repo, language="en", initial_prompt="Hey Rishi, Rishi.", verbose=False)
+            mlx_whisper.transcribe(test, path_or_hf_repo=repo, language="en", verbose=False)
             _log(f"WAKE_WORD_STATUS:Model loaded: {repo} ✓")
 
             def _t(audio):
-                # Gain normalization: amplify soft/far-field voices to studio level
+                # Gain normalization
                 max_amp = float(np.max(np.abs(audio)))
-                if max_amp > 0.0005:
+                if max_amp > 0.002:
                     audio_norm = (audio / max_amp * 0.95).astype(np.float32)
                 else:
                     audio_norm = audio
                 r = mlx_whisper.transcribe(
                     audio_norm, path_or_hf_repo=repo,
-                    language="en", initial_prompt="Hey Rishi, Rishi, wake up.",
+                    language="en",
                     verbose=False,
                 )
                 return r.get("text", "").lower().strip()
@@ -186,29 +185,33 @@ def main():
         if now - last_wake < COOLDOWN_SEC:
             return False
 
+        # Verify segment has meaningful energy before transcribing
+        seg_rms = float(np.sqrt(np.mean(audio_segment ** 2)))
+        if seg_rms < MIN_ENERGY * 0.8:
+            return False
+
         try:
             text = transcribe(audio_segment)
+            if not text or len(text.strip()) < 3:
+                return False
+
             # Filter out Whisper hallucinations (repetitive single-word outputs)
             words = text.split()
             if len(words) > 3 and len(set(words)) == 1:
-                _log(f"WAKE_WORD_STATUS:Hallucination filtered: \"{text[:60]}…\"")
                 return False
 
             _log(f"WAKE_WORD_STATUS:Heard → \"{text}\"")
 
             norm_text = text.lower().strip()
-            # Match any occurrence of rishi or wake phrases
-            if any(phrase in norm_text for phrase in WAKE_PHRASES) or "rishi" in norm_text or "reeshi" in norm_text:
+            # Match explicit wake phrases or rishi/reeshi word
+            matched = any(phrase in norm_text for phrase in WAKE_PHRASES) or "rishi" in norm_text or "reeshi" in norm_text
+            if matched:
                 last_wake = now
                 print("WAKE_WORD_DETECTED", flush=True)
                 _log("WAKE_WORD_STATUS:✅ 'Hey Rishi' detected!")
                 return True
             else:
-                _log("WAKE_WORD_STATUS:No match — listening…")
                 return False
-        except Exception as exc:
-            _log(f"WAKE_WORD_STATUS:Transcription error: {exc}")
-            return False
         except Exception as exc:
             _log(f"WAKE_WORD_STATUS:Transcription error: {exc}")
             return False
