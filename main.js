@@ -740,12 +740,23 @@ function resumeWakeWord() {
 }
 
 function speakText(text) {
-  if (speechProcess) speechProcess.kill('SIGTERM');
-  const spoken = String(text || '').replace(/\[[IPMVW]\d+\]/g, '').slice(0, 12000).trim();
-  if (!spoken) return false;
-  speechProcess = spawn('/usr/bin/say', ['-r', '195', spoken], { stdio: 'ignore' });
-  speechProcess.on('exit', () => { speechProcess = null; });
-  return true;
+  if (speechProcess) {
+    try { speechProcess.kill('SIGTERM'); } catch (_) {}
+    speechProcess = null;
+  }
+  const spoken = String(text || '').replace(/\[[A-Z0-9]+\]/g, '').slice(0, 12000).trim();
+  if (!spoken) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    speechProcess = spawn('/usr/bin/say', ['-r', '195', spoken], { stdio: 'ignore' });
+    speechProcess.on('exit', () => {
+      speechProcess = null;
+      resolve(true);
+    });
+    speechProcess.on('error', () => {
+      speechProcess = null;
+      resolve(false);
+    });
+  });
 }
 
 
