@@ -253,11 +253,11 @@ async function ask(text) {
       .replace(/Verified from.*$/gi, '')
       .trim();
 
-    showStatus('Rishi responding…');
+    showStatus('Bob responding…');
     setOrbState('speaking');
     await window.brain.speakText(spokenMessage);
     setOrbState('idle');
-    showStatus('Ready · Say "Hey Rishi" or "Stop" anytime');
+    showStatus('Ready · Say "Hey Bob" or "Stop" anytime');
 
   } catch (error) {
     if (answerText) answerText.textContent = `Error: ${error.message}`;
@@ -532,13 +532,14 @@ let bgChecking = false;
 function isWakeMatch(text) {
   const clean = (text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
   const wakePhrases = [
-    'rishi', 'reeshi', 'richie', 'richy', 'rishie', 'reshi', 'rushi',
-    'hey rishi', 'hi rishi', 'hey reeshi', 'hey richie', 'hey richy',
-    'hey receive', 'hey reach', 'did you see', 'you see', 'hey ready'
+    'hey bob', 'hi bob', 'bob', 'bobby', 'hey bobby', 'hi bobby',
+    'hey pop', 'hey rob', 'hey baub', 'hey bawb',
+    'hey rishi', 'hi rishi', 'rishi', 'reeshi', 'richie', 'richy',
+    'did you see', 'you see'
   ];
   if (wakePhrases.some(p => clean.includes(p))) return true;
   const words = clean.split(/\s+/);
-  return words.some(w => (w.startsWith('r') && (w.includes('sh') || w.includes('ch') || w.includes('si') || w.includes('ci'))) || ['rishi', 'reeshi', 'richie', 'richy', 'rish'].includes(w));
+  return words.some(w => ['bob', 'bobby', 'rishi', 'reeshi', 'richie', 'richy', 'rish'].includes(w));
 }
 
 async function initBackgroundWakeWord() {
