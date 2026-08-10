@@ -70,8 +70,9 @@ def _find_transcribe():
         import mlx_whisper
 
         for repo in [
+            "mlx-community/whisper-tiny",
+            "mlx-community/whisper-base",
             "mlx-community/whisper-large-v3-turbo",
-            "mlx-community/whisper-tiny-en-mlx",
         ]:
             try:
                 import numpy as np
