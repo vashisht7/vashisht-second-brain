@@ -48,12 +48,10 @@ COOLDOWN_SEC     = 2.5   # 2.5s cooldown after trigger
 PERIODIC_SEC     = 4.5
 
 WAKE_PHRASES = [
+    "hey bob", "hi bob", "bob", "bobby", "hey bobby", "hi bobby",
+    "hey pop", "hey rob", "hey baub",
     "hey rishi", "hi rishi", "hey reeshi", "hey richi", "hay rishi",
-    "hey rishie", "hey rish", "a rishi", "ey rishi", "hey richy",
-    "hey richie", "hey rishee", "hei rishi", "hey rushi", "he rishi",
-    "hey reche", "hey rachy", "hey reishi", "hey reesha", "hey reshi",
-    "hey rishi.", "hey, rishi", "hey rishi!", "hey-rishi",
-    "hi rish", "rishi", "reeshi", "richi", "rishie", "richy", "richie"
+    "rishi", "reeshi", "richie", "richy", "rishie"
 ]
 
 _paused = False
@@ -178,20 +176,20 @@ def main():
     last_periodic = time.monotonic()
     total_voiced_since_periodic = 0
 
-    def is_rishi_match(text):
+    def is_wake_match(text):
         clean_t = text.lower().replace('.', '').replace(',', '').replace('?', '').replace('!', '').strip()
         words = clean_t.split()
         wake_phrases = [
+            'hey bob', 'hi bob', 'bob', 'bobby', 'hey bobby', 'hi bobby',
+            'hey pop', 'hey rob', 'hey baub',
             'rishi', 'reeshi', 'richie', 'richy', 'rishie', 'reshi', 'rushi',
             'hey rishi', 'hi rishi', 'hey reeshi', 'hey richie', 'hey richy',
-            'hey receive', 'hey reach', 'hey rachel', 'did you see', 'you see',
-            'hey ratio', 'hey rushi', 'hey reshi', 'hey ready', 'hey reachy'
+            'hey receive', 'hey reach', 'did you see', 'you see'
         ]
         if any(p in clean_t for p in wake_phrases):
             return True
-        for w in words:
-            if (w.startswith('r') and ('sh' in w or 'ch' in w or 'si' in w or 'ci' in w)) or w in ['rishi', 'reeshi', 'richie', 'richy', 'rish']:
-                return True
+        if any(w in ['bob', 'bobby', 'rishi', 'reeshi', 'richie', 'richy', 'rish'] for w in words):
+            return True
         return False
 
     def _check_wake(audio_segment):
@@ -213,10 +211,10 @@ def main():
 
             _log(f"WAKE_WORD_STATUS:Heard → \"{text}\"")
 
-            if is_rishi_match(text):
+            if is_wake_match(text):
                 last_wake = now
                 print("WAKE_WORD_DETECTED", flush=True)
-                _log("WAKE_WORD_STATUS:✅ 'Hey Rishi' detected!")
+                _log("WAKE_WORD_STATUS:✅ 'Hey Bob' detected!")
                 return True
             else:
                 return False
