@@ -83,7 +83,7 @@ function setOrbState(mode) {
 }
 
 function showStatus(text) {
-  if (orbStatus) orbStatus.textContent = text || 'Listening for "Hey Rishi"…';
+  if (orbStatus) orbStatus.textContent = text || 'Listening for "Hey Bob"…';
   if (status) {
     status.textContent = text;
     status.hidden = !text;
@@ -186,15 +186,15 @@ function wav(samples, rate = 16000) {
   return new Uint8Array(buffer);
 }
 
-/* ── Ask Rishi (Private Session, 3s Timeout, Immediate Close on Stop) ── */
+/* ── Ask Bob (Private Session, 3s Timeout, Immediate Close on Stop) ── */
 async function ask(text) {
   text = (text || '').trim();
   if (!text && state.imageAttachments.length) {
     text = 'Read and summarize the attached image.';
   }
-  if (!text || state.busy) return;
+  if (!text || state.busy || state.closing) return;
 
-  // Handle Stop Intent: Close popup immediately and sign off
+  // Handle Stop Intent: Close popup immediately and silently
   if (isStopIntent(text)) {
     state.closing = true;
     if (state.currentFetchController) {
@@ -203,13 +203,18 @@ async function ask(text) {
     }
     window.brain.stopSpeaking();
     resetAudio();
-    showStatus('Signing off…');
+    showStatus('Signed off');
     window.brain.hideQuickWindow();
-    try {
-      await window.brain.speakText("Signing off.");
-    } catch (_) {}
     state.closing = false;
     state.busy = false;
+    return;
+  }
+
+  // If input was just the wake word itself, stay ready to listen for the actual question
+  const cleanInp = text.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (['heybob', 'bob', 'hibob', 'bobby', 'heybobby', 'heyrishi', 'rishi'].includes(cleanInp)) {
+    showStatus('Listening… what is your question?');
+    setOrbState('listening');
     return;
   }
 
@@ -222,7 +227,7 @@ async function ask(text) {
   state.imageAttachments = [];
   renderQuickAttachments();
 
-  showStatus('Rishi is thinking…');
+  showStatus('Bob is thinking…');
   setOrbState('thinking');
 
   try {
@@ -257,21 +262,27 @@ async function ask(text) {
       .replace(/Verified from.*$/gi, '')
       .trim();
 
-    showStatus('Bob responding…');
-    setOrbState('speaking');
-    await window.brain.speakText(spokenMessage);
-    setOrbState('idle');
-    showStatus('Ready · Say "Hey Bob" or "Stop" anytime');
+    if (!state.closing) {
+      showStatus('Bob responding…');
+      setOrbState('speaking');
+      await window.brain.speakText(spokenMessage);
+      if (!state.closing) {
+        setOrbState('idle');
+        showStatus('Ready · Say "Hey Bob" or "Stop" anytime');
+      }
+    }
 
   } catch (error) {
-    if (answerText) answerText.textContent = `Error: ${error.message}`;
-    showStatus(`Error: ${error.message}`);
-    setOrbState('idle');
+    if (!state.closing) {
+      if (answerText) answerText.textContent = `Error: ${error.message}`;
+      showStatus(`Error: ${error.message}`);
+      setOrbState('idle');
+    }
   } finally {
     state.busy = false;
     if (mic) { mic.classList.remove('processing'); mic.disabled = false; }
     if (send) send.disabled = false;
-    if (state.isExpanded && prompt) prompt.focus();
+    if (state.isExpanded && prompt && !state.closing) prompt.focus();
   }
 }
 
@@ -360,7 +371,7 @@ async function stopRecording() {
     const result = await window.brain.transcribeAudio(wav(samples), 'audio/wav');
     const text = (result?.text || '').trim();
     if (!text) {
-      showStatus('Ready · Say "Hey Rishi" anytime');
+      showStatus('Ready · Say "Hey Bob" anytime');
       setOrbState('idle');
       return;
     }
@@ -368,7 +379,7 @@ async function stopRecording() {
     showStatus(`Understood: "${text}"`);
     await ask(text);
   } catch (error) {
-    showStatus('Ready · Say "Hey Rishi" anytime');
+    showStatus('Ready · Say "Hey Bob" anytime');
     setOrbState('idle');
   } finally {
     if (mic) {
