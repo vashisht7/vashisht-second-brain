@@ -37,15 +37,15 @@ WINDOW_SEC     = 2.5                                     # ring buffer length
 WINDOW_SAMPLES = int(SAMPLE_RATE * WINDOW_SEC)           # 40000
 
 # Adaptive VAD parameters — tuned for high far-field & soft voice sensitivity
-NOISE_MULTIPLIER = 1.3   # speech only needs to be 30% louder than ambient floor
-MIN_ENERGY       = 0.0012 # capture soft whispers and faraway voices
+NOISE_MULTIPLIER = 1.15  # speech only needs to be 15% louder than ambient floor
+MIN_ENERGY       = 0.0006 # capture soft whispers and faraway voices
 MIN_SPEECH       = 2     # 2 voiced chunks (~160ms) to catch quiet utterances
-MAX_SILENCE      = 6     # 6 silent chunks (~480ms) to transcribe quickly
-CALIBRATION_SEC  = 2.0   # calibrate ambient noise floor at startup
-COOLDOWN_SEC     = 2.0   # 2s cooldown after trigger
+MAX_SILENCE      = 5     # 5 silent chunks (~400ms) to transcribe quickly
+CALIBRATION_SEC  = 1.5   # calibrate ambient noise floor at startup
+COOLDOWN_SEC     = 1.5   # 1.5s cooldown after trigger
 
 # Periodic fallback: transcribe every PERIODIC_SEC seconds if there's speech
-PERIODIC_SEC     = 3.0
+PERIODIC_SEC     = 2.5
 
 WAKE_PHRASES = [
     "hey rishi", "hi rishi", "hey reeshi", "hey richi", "hay rishi",
@@ -94,17 +94,6 @@ def _find_transcribe():
     except ImportError:
         pass
 
-    try:
-        import whisper as _ow
-        _m = _ow.load_model("tiny.en")
-        _log("WAKE_WORD_STATUS:Whisper backend = OpenAI tiny.en ✓")
-
-        def _t(audio):
-            return _m.transcribe(audio, language="en", fp16=False).get("text", "").lower().strip()
-        return _t
-    except ImportError:
-        pass
-
     return None
 
 
@@ -129,15 +118,18 @@ def main():
     try:
         import sounddevice as sd
         import numpy as np
+        import scipy.signal
     except ImportError as e:
         _log(f"WAKE_WORD_ERROR:Missing dependency: {e}")
         sys.exit(1)
 
     try:
         dev = sd.query_devices(kind="input")
-        _log(f"WAKE_WORD_STATUS:Mic: {dev['name']} (sr={dev['default_samplerate']})")
+        native_sr = int(dev.get("default_samplerate", 44100))
+        _log(f"WAKE_WORD_STATUS:Mic: {dev['name']} (native_sr={native_sr})")
     except Exception:
-        _log("WAKE_WORD_STATUS:Could not query input device")
+        native_sr = 44100
+        _log("WAKE_WORD_STATUS:Could not query input device, using 44100")
 
     transcribe = _find_transcribe()
     if not transcribe:
@@ -147,11 +139,16 @@ def main():
     threading.Thread(target=_stdin_watcher, daemon=True).start()
 
     # ── Phase 1: Calibrate ambient noise ────────────────────────────
-    _log("WAKE_WORD_STATUS:Calibrating ambient noise (2s)… stay quiet")
-    cal_samples = int(SAMPLE_RATE * CALIBRATION_SEC)
-    cal_audio = sd.rec(cal_samples, samplerate=SAMPLE_RATE, channels=1, dtype="float32")
+    _log("WAKE_WORD_STATUS:Calibrating ambient noise (1.5s)… stay quiet")
+    cal_samples = int(native_sr * CALIBRATION_SEC)
+    cal_audio = sd.rec(cal_samples, samplerate=native_sr, channels=1, dtype="float32")
     sd.wait()
     cal_flat = cal_audio[:, 0]
+
+    # Resample calibration audio to 16kHz
+    if native_sr != SAMPLE_RATE:
+        num_target = int(len(cal_flat) * SAMPLE_RATE / native_sr)
+        cal_flat = scipy.signal.resample(cal_flat, num_target).astype(np.float32)
 
     # Compute RMS per chunk, then take the 90th percentile as noise floor
     rms_values = []
@@ -160,7 +157,7 @@ def main():
         if len(chunk) == CHUNK_SAMPLES:
             rms_values.append(float(np.sqrt(np.mean(chunk ** 2))))
 
-    noise_floor = float(np.percentile(rms_values, 90)) if rms_values else 0.01
+    noise_floor = float(np.percentile(rms_values, 90)) if rms_values else 0.005
     speech_threshold = max(noise_floor * NOISE_MULTIPLIER, MIN_ENERGY)
 
     _log(f"WAKE_WORD_STATUS:Noise floor = {noise_floor:.6f}")
@@ -169,8 +166,9 @@ def main():
 
     # ── Phase 2: Listen ──────────────────────────────────────────────
     audio_q: _queue.Queue = _queue.Queue(maxsize=1000)
-
     last_audio_time = time.monotonic()
+
+    native_chunk_samples = int(native_sr * CHUNK_MS / 1000)
 
     def _sd_callback(indata, frames, time_info, status):
         nonlocal last_audio_time
@@ -178,7 +176,13 @@ def main():
         if status:
             _log(f"WAKE_WORD_STATUS:Audio status: {status}")
         if not _paused:
-            audio_q.put(indata[:, 0].astype(np.float32).copy())
+            raw_chunk = indata[:, 0].astype(np.float32).copy()
+            if native_sr != SAMPLE_RATE:
+                target_len = int(len(raw_chunk) * SAMPLE_RATE / native_sr)
+                resampled_chunk = scipy.signal.resample(raw_chunk, target_len).astype(np.float32)
+            else:
+                resampled_chunk = raw_chunk
+            audio_q.put(resampled_chunk)
 
     ring       = np.zeros(WINDOW_SAMPLES, dtype=np.float32)
     ring_pos   = 0
@@ -206,7 +210,9 @@ def main():
 
             _log(f"WAKE_WORD_STATUS:Heard → \"{text}\"")
 
-            if any(phrase in text for phrase in WAKE_PHRASES):
+            norm_text = text.lower().strip()
+            # Match any occurrence of rishi or wake phrases
+            if any(phrase in norm_text for phrase in WAKE_PHRASES) or "rishi" in norm_text or "reeshi" in norm_text:
                 last_wake = now
                 print("WAKE_WORD_DETECTED", flush=True)
                 _log("WAKE_WORD_STATUS:✅ 'Hey Rishi' detected!")
@@ -214,6 +220,9 @@ def main():
             else:
                 _log("WAKE_WORD_STATUS:No match — listening…")
                 return False
+        except Exception as exc:
+            _log(f"WAKE_WORD_STATUS:Transcription error: {exc}")
+            return False
         except Exception as exc:
             _log(f"WAKE_WORD_STATUS:Transcription error: {exc}")
             return False
