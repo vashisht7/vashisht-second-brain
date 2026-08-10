@@ -22,9 +22,36 @@ import threading
 import urllib.parse
 import urllib.request
 import uuid
+import base64
+import io
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from knowledge_graph import LocalKnowledgeGraph
+
+
+_whisper_lock = threading.Lock()
+
+def transcribe_fast_wav(wav_bytes: bytes) -> str:
+    try:
+        import mlx_whisper
+        import numpy as np
+        import wave
+
+        with wave.open(io.BytesIO(wav_bytes), 'rb') as wf:
+            n_frames = wf.getnframes()
+            audio_raw = wf.readframes(n_frames)
+            audio_arr = np.frombuffer(audio_raw, dtype=np.int16).astype(np.float32) / 32768.0
+
+        with _whisper_lock:
+            res = mlx_whisper.transcribe(
+                audio_arr,
+                path_or_hf_repo="mlx-community/whisper-tiny",
+                language="en",
+                verbose=False
+            )
+            return res.get("text", "").strip()
+    except Exception as exc:
+        return ""
 
 
 ROOT = Path("/Users/vashishtdevasani/PersonalAIData")
@@ -1419,6 +1446,12 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/conversations/delete":
                 payload = self.payload()
                 return self.send_json(200, delete_conversation(payload.get("id")))
+            if self.path == "/api/transcribe-fast":
+                payload = self.payload()
+                raw_b64 = payload.get("audio_base64", "")
+                wav_bytes = base64.b64decode(raw_b64) if raw_b64 else b""
+                text = transcribe_fast_wav(wav_bytes)
+                return self.send_json(200, {"text": text})
             if self.path == "/api/indexer/scan":
                 def run_indexer():
                     subprocess.run([sys.executable, str(ROOT / "95_tools/second_brain/second_brain.py"), "scan"])
