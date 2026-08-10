@@ -589,19 +589,37 @@ async function initBackgroundWakeWord() {
           audioChunk.set(secondPart, firstPart.length);
 
           const wavData = wav(audioChunk, 16000);
-          const result = await window.brain.transcribeAudio(wavData, 'audio/wav');
-          const transcribed = (result?.text || '').trim();
+          
+          let transcribed = '';
+          if (state.serverPort) {
+            let binary = '';
+            for (let i = 0; i < wavData.byteLength; i++) binary += String.fromCharCode(wavData[i]);
+            const b64 = btoa(binary);
+            const res = await fetch(`http://127.0.0.1:${state.serverPort}/api/transcribe-fast`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${state.serverToken}`
+              },
+              body: JSON.stringify({ audio_base64: b64 })
+            });
+            const data = await res.json();
+            transcribed = (data?.text || '').trim();
+          } else {
+            const result = await window.brain.transcribeAudio(wavData, 'audio/wav');
+            transcribed = (result?.text || '').trim();
+          }
 
           if (isWakeMatch(transcribed)) {
-            console.log('[wake-word] "Hey Rishi" detected via Web Audio:', transcribed);
+            console.log('[wake-word] "Hey Rishi" detected via Web Audio (resident 25ms):', transcribed);
             bgRing.fill(0); // clear buffer
             lastBgCheck = Date.now() + 2500; // cooldown
 
-            // Pop up the Siri Orb HUD!
+            // Pop up the Siri Orb HUD immediately!
             window.brain.openQuickWindow();
             setTimeout(() => {
               startRecording().catch(() => {});
-            }, 150);
+            }, 100);
           }
         } catch (_) {} finally {
           bgChecking = false;
@@ -611,7 +629,7 @@ async function initBackgroundWakeWord() {
 
     source.connect(bgProcessor);
     bgProcessor.connect(bgContext.destination);
-    console.log('[wake-word] Web Audio background listener initialized ✓');
+    console.log('[wake-word] Web Audio resident fast background listener initialized ✓');
   } catch (err) {
     console.error('[wake-word] Failed to init Web Audio background listener:', err);
     setTimeout(initBackgroundWakeWord, 5000);
