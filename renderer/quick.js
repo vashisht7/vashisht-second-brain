@@ -265,10 +265,18 @@ async function ask(text) {
     if (!state.closing) {
       showStatus('Bob responding…');
       setOrbState('speaking');
-      await window.brain.speakText(spokenMessage);
+      
+      const fullSpeech = `${spokenMessage} Anything else?`.trim();
+      await window.brain.speakText(fullSpeech);
+      
       if (!state.closing) {
-        setOrbState('idle');
-        showStatus('Ready · Say "Hey Bob" or "Stop" anytime');
+        setOrbState('listening');
+        showStatus('Listening… (Say "No" or "That\'s it" to close)');
+        setTimeout(() => {
+          if (!state.closing && !state.recording && !state.busy) {
+            startRecording().catch(() => {});
+          }
+        }, 120);
       }
     }
 
@@ -539,7 +547,7 @@ window.brain?.onQuickVoiceStop?.(() => stopRecording());
 let bgStream = null;
 let bgContext = null;
 let bgProcessor = null;
-const bgRing = new Float32Array(16000 * 2.0); // 2.0s rolling buffer
+const bgRing = new Float32Array(16000 * 1.2); // 1.2s rolling buffer
 let bgRingPos = 0;
 let lastBgCheck = 0;
 let lastTriggerTime = 0;
@@ -571,7 +579,7 @@ async function initBackgroundWakeWord() {
     });
     bgContext = new (window.AudioContext || window.webkitAudioContext)();
     const source = bgContext.createMediaStreamSource(bgStream);
-    bgProcessor = bgContext.createScriptProcessor(2048, 1, 1);
+    bgProcessor = bgContext.createScriptProcessor(1024, 1, 1);
 
     bgProcessor.onaudioprocess = async (e) => {
       // If window is currently actively recording or busy, skip background check
@@ -594,18 +602,29 @@ async function initBackgroundWakeWord() {
         bgRingPos = (bgRingPos + 1) % bgRing.length;
       }
 
-      // If voice energy is detected and at least 350ms since last check
-      if (rms >= 0.005 && (now - lastBgCheck >= 350) && !bgChecking) {
+      // If voice energy is detected (sensitive for far-field room voice) and at least 200ms since last check
+      if (rms >= 0.002 && (now - lastBgCheck >= 200) && !bgChecking) {
         lastBgCheck = now;
         bgChecking = true;
 
         try {
-          // Extract ordered 1.8s audio buffer
+          // Extract ordered 1.2s audio buffer
           const audioChunk = new Float32Array(bgRing.length);
           const firstPart = bgRing.slice(bgRingPos);
           const secondPart = bgRing.slice(0, bgRingPos);
           audioChunk.set(firstPart, 0);
           audioChunk.set(secondPart, firstPart.length);
+
+          // Gain normalization: amplify far-field voice across the room to studio level
+          let maxAmp = 0;
+          for (let i = 0; i < audioChunk.length; i++) {
+            const a = Math.abs(audioChunk[i]);
+            if (a > maxAmp) maxAmp = a;
+          }
+          if (maxAmp > 0.001) {
+            const scale = 0.95 / maxAmp;
+            for (let i = 0; i < audioChunk.length; i++) audioChunk[i] *= scale;
+          }
 
           const wavData = wav(audioChunk, 16000);
           
@@ -638,7 +657,7 @@ async function initBackgroundWakeWord() {
             window.brain.openQuickWindow();
             setTimeout(() => {
               startRecording().catch(() => {});
-            }, 80);
+            }, 60);
           }
         } catch (_) {} finally {
           bgChecking = false;
