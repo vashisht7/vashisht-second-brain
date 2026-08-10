@@ -519,3 +519,104 @@ window.brain?.onQuickFocus?.(() => {
 });
 window.brain?.onQuickVoiceStart?.(() => startRecording().catch((e) => { resetAudio(); showStatus(e.message); }));
 window.brain?.onQuickVoiceStop?.(() => stopRecording());
+
+/* ── Always-On Web Audio Background Wake-Word Engine ───────── */
+let bgStream = null;
+let bgContext = null;
+let bgProcessor = null;
+const bgRing = new Float32Array(16000 * 2.0); // 2.0s rolling buffer
+let bgRingPos = 0;
+let lastBgCheck = 0;
+let bgChecking = false;
+
+function isWakeMatch(text) {
+  const clean = (text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+  const wakePhrases = [
+    'rishi', 'reeshi', 'richie', 'richy', 'rishie', 'reshi', 'rushi',
+    'hey rishi', 'hi rishi', 'hey reeshi', 'hey richie', 'hey richy',
+    'hey receive', 'hey reach', 'did you see', 'you see', 'hey ready'
+  ];
+  if (wakePhrases.some(p => clean.includes(p))) return true;
+  const words = clean.split(/\s+/);
+  return words.some(w => (w.startsWith('r') && (w.includes('sh') || w.includes('ch') || w.includes('si') || w.includes('ci'))) || ['rishi', 'reeshi', 'richie', 'richy', 'rish'].includes(w));
+}
+
+async function initBackgroundWakeWord() {
+  if (bgStream) return;
+  try {
+    bgStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      }
+    });
+    bgContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = bgContext.createMediaStreamSource(bgStream);
+    bgProcessor = bgContext.createScriptProcessor(2048, 1, 1);
+
+    bgProcessor.onaudioprocess = async (e) => {
+      // If window is currently actively recording or busy, skip background check
+      if (state.recording || state.busy) return;
+
+      const input = e.inputBuffer.getChannelData(0);
+      const resampled = downsample(input, bgContext.sampleRate, 16000);
+
+      // Calculate energy
+      let sumSq = 0;
+      for (let i = 0; i < resampled.length; i++) sumSq += resampled[i] * resampled[i];
+      const rms = Math.sqrt(sumSq / resampled.length);
+
+      // Write to ring buffer
+      for (let i = 0; i < resampled.length; i++) {
+        bgRing[bgRingPos] = resampled[i];
+        bgRingPos = (bgRingPos + 1) % bgRing.length;
+      }
+
+      const now = Date.now();
+      // If voice energy is detected and at least 500ms since last check
+      if (rms >= 0.006 && (now - lastBgCheck >= 500) && !bgChecking) {
+        lastBgCheck = now;
+        bgChecking = true;
+
+        try {
+          // Extract ordered 1.8s audio buffer
+          const audioChunk = new Float32Array(bgRing.length);
+          const firstPart = bgRing.slice(bgRingPos);
+          const secondPart = bgRing.slice(0, bgRingPos);
+          audioChunk.set(firstPart, 0);
+          audioChunk.set(secondPart, firstPart.length);
+
+          const wavData = wav(audioChunk, 16000);
+          const result = await window.brain.transcribeAudio(wavData, 'audio/wav');
+          const transcribed = (result?.text || '').trim();
+
+          if (isWakeMatch(transcribed)) {
+            console.log('[wake-word] "Hey Rishi" detected via Web Audio:', transcribed);
+            bgRing.fill(0); // clear buffer
+            lastBgCheck = Date.now() + 2500; // cooldown
+
+            // Pop up the Siri Orb HUD!
+            window.brain.openQuickWindow();
+            setTimeout(() => {
+              startRecording().catch(() => {});
+            }, 150);
+          }
+        } catch (_) {} finally {
+          bgChecking = false;
+        }
+      }
+    };
+
+    source.connect(bgProcessor);
+    bgProcessor.connect(bgContext.destination);
+    console.log('[wake-word] Web Audio background listener initialized ✓');
+  } catch (err) {
+    console.error('[wake-word] Failed to init Web Audio background listener:', err);
+    setTimeout(initBackgroundWakeWord, 5000);
+  }
+}
+
+// Start Web Audio background listener immediately
+initBackgroundWakeWord();
