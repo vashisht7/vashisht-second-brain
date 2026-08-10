@@ -221,12 +221,12 @@ def main():
         return np.concatenate([ring[ring_pos:], ring[:ring_pos]])
 
     def _processor():
-        nonlocal ring, ring_pos, in_speech, sp_chunks, si_chunks
-        nonlocal last_periodic, total_voiced_since_periodic
+        nonlocal ring, ring_pos, last_wake
+        last_eval_time = 0.0
 
         while True:
             try:
-                chunk = audio_q.get(timeout=2.0)
+                chunk = audio_q.get(timeout=1.0)
             except _queue.Empty:
                 continue
 
@@ -243,37 +243,16 @@ def main():
                 ring[:n - first] = chunk[first:]
                 ring_pos = n - first
 
-            # Adaptive energy VAD
             rms = float(np.sqrt(np.mean(chunk ** 2)))
 
-            if rms >= speech_threshold:
-                sp_chunks += 1
-                si_chunks  = 0
-                in_speech  = True
-                total_voiced_since_periodic += 1
-            else:
-                if in_speech:
-                    si_chunks += 1
-                    if si_chunks >= MAX_SILENCE and sp_chunks >= MIN_SPEECH:
-                        # Speech ended → transcribe
-                        _log(f"WAKE_WORD_STATUS:Speech ended ({sp_chunks} voiced chunks)")
-                        _check_wake(_get_ring_audio())
-
-                        in_speech  = False
-                        sp_chunks  = 0
-                        si_chunks  = 0
-                        total_voiced_since_periodic = 0
-                        last_periodic = time.monotonic()
-
-            # Periodic fallback: if we've been in "speech" for too long
-            # (no clean silence boundary), force a transcription
             now = time.monotonic()
-            if (now - last_periodic >= PERIODIC_SEC
-                    and total_voiced_since_periodic >= MIN_SPEECH):
-                _log(f"WAKE_WORD_STATUS:Periodic check ({total_voiced_since_periodic} voiced)")
-                _check_wake(_get_ring_audio())
-                total_voiced_since_periodic = 0
-                last_periodic = now
+            # If audio energy is above baseline voice threshold and at least 500ms since last check
+            if rms >= 0.0025 and (now - last_eval_time >= 0.5) and (now - last_wake >= COOLDOWN_SEC):
+                last_eval_time = now
+                ring_audio = _get_ring_audio()
+                if _check_wake(ring_audio):
+                    ring.fill(0)
+                    last_eval_time = now + COOLDOWN_SEC
 
     threading.Thread(target=_processor, daemon=True).start()
 
