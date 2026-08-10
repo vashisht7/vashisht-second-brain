@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, MenuItem, nativeImage, session, shell, systemPreferences, Tray } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, MenuItem, nativeImage, powerMonitor, powerSaveBlocker, session, shell, systemPreferences, Tray } = require('electron');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
@@ -695,11 +695,41 @@ function startWakeWord() {
     wakeWordProcess = null;
     if (!app.isQuitting) {
       if (code && code !== 0) console.error(`[vasi-wake] exited with ${code}`);
-      // Auto-restart after 5s in case of transient mic error
-      wakeWordRestartTimer = setTimeout(startWakeWord, 5000);
+      // Auto-restart after 2s in case of transient mic error
+      if (wakeWordRestartTimer) clearTimeout(wakeWordRestartTimer);
+      wakeWordRestartTimer = setTimeout(startWakeWord, 2000);
     }
   });
 }
+
+// ── Persistent Power & Sleep Watchdog ────────────────────────────────────────
+try {
+  powerSaveBlocker.start('prevent-app-suspension');
+} catch (_) {}
+
+powerMonitor.on('resume', () => {
+  console.log('[power] macOS resumed from sleep — refreshing wake-word microphone stream');
+  if (wakeWordProcess) {
+    try { wakeWordProcess.kill('SIGTERM'); } catch (_) {}
+    wakeWordProcess = null;
+  }
+  setTimeout(startWakeWord, 1000);
+});
+
+powerMonitor.on('unlock-screen', () => {
+  console.log('[power] Screen unlocked — ensuring wake-word engine is active');
+  if (!wakeWordProcess && !app.isQuitting) {
+    startWakeWord();
+  }
+});
+
+// Periodic 15s heartbeat watchdog: ensures wake word process is always alive
+setInterval(() => {
+  if (!wakeWordProcess && !app.isQuitting) {
+    console.log('[watchdog] Wake-word engine inactive — auto-restarting…');
+    startWakeWord();
+  }
+}, 15000);
 
 function pauseWakeWord() {
   try { wakeWordProcess?.stdin?.write('PAUSE\n'); } catch (_) {}

@@ -256,27 +256,27 @@ def main():
 
     threading.Thread(target=_processor, daemon=True).start()
 
-    _log("WAKE_WORD_LISTENING")
-    _log("WAKE_WORD_STATUS:🎧 Listening for 'Hey Rishi' — speak clearly into mic")
-
-    try:
-        with sd.InputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            blocksize=CHUNK_SAMPLES,
-            callback=_sd_callback,
-        ):
-            while True:
-                time.sleep(2.0)
-                # CoreAudio Watchdog: If no audio callbacks received for > 8 seconds (e.g. system sleep/wake),
-                # exit immediately so parent Electron process auto-restarts a fresh stream!
-                if time.monotonic() - last_audio_time > 8.0:
-                    _log("WAKE_WORD_ERROR:Mic stream stopped receiving audio (system sleep detected). Restarting...")
-                    sys.exit(1)
-    except Exception as exc:
-        _log(f"WAKE_WORD_ERROR:Mic stream failed: {exc}")
-        sys.exit(1)
+    while True:
+        try:
+            last_audio_time = time.monotonic()
+            with sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="float32",
+                blocksize=CHUNK_SAMPLES,
+                callback=_sd_callback,
+            ):
+                _log("WAKE_WORD_LISTENING")
+                _log("WAKE_WORD_STATUS:🎧 Listening for 'Hey Rishi' — active")
+                while True:
+                    time.sleep(1.0)
+                    # If no audio callback for > 5 seconds (macOS sleep/wake detected), reconnect stream in-place
+                    if time.monotonic() - last_audio_time > 5.0:
+                        _log("WAKE_WORD_STATUS:Audio stream suspended (sleep detected). Reconnecting stream…")
+                        break
+        except Exception as exc:
+            _log(f"WAKE_WORD_STATUS:Mic stream error: {exc}. Retrying in 1s…")
+            time.sleep(1.0)
 
 
 if __name__ == "__main__":
