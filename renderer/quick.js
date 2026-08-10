@@ -127,6 +127,10 @@ function resetAudio() {
   state.stream = state.context = state.source = state.processor = state.mute = null;
   state.recording = false;
   state.voiceRequested = false;
+  state.busy = false;
+  bgChecking = false;
+  lastTriggerTime = 0;
+  if (bgContext && bgContext.state === 'suspended') bgContext.resume().catch(() => {});
   setOrbState('idle');
   if (mic) {
     mic.classList.remove('recording', 'processing');
@@ -527,6 +531,7 @@ let bgProcessor = null;
 const bgRing = new Float32Array(16000 * 2.0); // 2.0s rolling buffer
 let bgRingPos = 0;
 let lastBgCheck = 0;
+let lastTriggerTime = 0;
 let bgChecking = false;
 
 function isWakeMatch(text) {
@@ -561,6 +566,9 @@ async function initBackgroundWakeWord() {
       // If window is currently actively recording or busy, skip background check
       if (state.recording || state.busy) return;
 
+      const now = Date.now();
+      if (now - lastTriggerTime < 800) return; // 800ms cooldown after trigger
+
       const input = e.inputBuffer.getChannelData(0);
       const resampled = downsample(input, bgContext.sampleRate, 16000);
 
@@ -575,9 +583,8 @@ async function initBackgroundWakeWord() {
         bgRingPos = (bgRingPos + 1) % bgRing.length;
       }
 
-      const now = Date.now();
-      // If voice energy is detected and at least 500ms since last check
-      if (rms >= 0.006 && (now - lastBgCheck >= 500) && !bgChecking) {
+      // If voice energy is detected and at least 350ms since last check
+      if (rms >= 0.005 && (now - lastBgCheck >= 350) && !bgChecking) {
         lastBgCheck = now;
         bgChecking = true;
 
@@ -612,15 +619,15 @@ async function initBackgroundWakeWord() {
           }
 
           if (isWakeMatch(transcribed)) {
-            console.log('[wake-word] "Hey Rishi" detected via Web Audio (resident 25ms):', transcribed);
+            console.log('[wake-word] "Hey Bob" detected via Web Audio (resident 25ms):', transcribed);
             bgRing.fill(0); // clear buffer
-            lastBgCheck = Date.now() + 2500; // cooldown
+            lastTriggerTime = Date.now();
 
             // Pop up the Siri Orb HUD immediately!
             window.brain.openQuickWindow();
             setTimeout(() => {
               startRecording().catch(() => {});
-            }, 100);
+            }, 80);
           }
         } catch (_) {} finally {
           bgChecking = false;
@@ -633,9 +640,16 @@ async function initBackgroundWakeWord() {
     console.log('[wake-word] Web Audio resident fast background listener initialized ✓');
   } catch (err) {
     console.error('[wake-word] Failed to init Web Audio background listener:', err);
-    setTimeout(initBackgroundWakeWord, 5000);
+    setTimeout(initBackgroundWakeWord, 3000);
   }
 }
+
+// Auto-resume audio context if suspended
+setInterval(() => {
+  if (bgContext && bgContext.state === 'suspended') {
+    bgContext.resume().catch(() => {});
+  }
+}, 3000);
 
 // Start Web Audio background listener immediately
 initBackgroundWakeWord();
