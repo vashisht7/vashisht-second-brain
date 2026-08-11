@@ -178,18 +178,21 @@ def main():
 
     def is_wake_match(text):
         clean_t = text.lower().replace('.', '').replace(',', '').replace('?', '').replace('!', '').strip()
-        words = clean_t.split()
+        if not clean_t or len(clean_t) < 3:
+            return False
+
         wake_phrases = [
-            'hey bob', 'hi bob', 'bob', 'bobby', 'hey bobby', 'hi bobby',
-            'hey pop', 'hey rob', 'hey baub',
-            'rishi', 'reeshi', 'richie', 'richy', 'rishie', 'reshi', 'rushi',
-            'hey rishi', 'hi rishi', 'hey reeshi', 'hey richie', 'hey richy',
-            'hey receive', 'hey reach', 'did you see', 'you see'
+            'hey bob', 'hi bob', 'okay bob', 'ok bob', 'hey bobby', 'hi bobby',
+            'hey rishi', 'hi rishi'
         ]
         if any(p in clean_t for p in wake_phrases):
             return True
-        if any(w in ['bob', 'bobby', 'rishi', 'reeshi', 'richie', 'richy', 'rish'] for w in words):
-            return True
+
+        words = clean_t.split()
+        if 'bob' in words or 'bobby' in words:
+            if len(words) <= 4:
+                return True
+
         return False
 
     def _check_wake(audio_segment):

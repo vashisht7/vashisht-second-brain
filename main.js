@@ -227,19 +227,38 @@ function setupTray() {
   updateTrayStatus('🟢 Ready', lastAutoIndexTime ? `Last indexed ${lastAutoIndexTime}` : 'Background auto-indexing active');
 }
 
+let wakeWordMuted = false;
+
+function toggleWakeWordMute() {
+  wakeWordMuted = !wakeWordMuted;
+  if (wakeWordMuted) {
+    pauseWakeWord();
+    quickWindow?.webContents?.send('set-wake-word-muted', true);
+    updateTrayStatus('🔴 Wake-Word Muted', 'Meeting / Video Mode Active');
+  } else {
+    resumeWakeWord();
+    quickWindow?.webContents?.send('set-wake-word-muted', false);
+    updateTrayStatus('🟢 Ready', 'Wake-Word Active');
+  }
+}
+
 function updateTrayStatus(statusTitle, detailMsg = '') {
   if (!tray) return;
   trayStatusText = statusTitle;
-  const tooltip = `Rishi Assistant v6.0.0\n${statusTitle}${detailMsg ? ` · ${detailMsg}` : ''}`;
+  const tooltip = `Bob Assistant v6.0.0\n${statusTitle}${detailMsg ? ` · ${detailMsg}` : ''}`;
   tray.setToolTip(tooltip);
 
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Rishi Assistant v6.0.0', enabled: false },
+    { label: 'Bob Assistant v6.0.0', enabled: false },
     { label: `${statusTitle}${detailMsg ? ` (${detailMsg})` : ''}`, enabled: false },
     { type: 'separator' },
     {
       label: '💬 Open Quick Chat (⌘⇧Space)',
       click: () => toggleQuickWindow()
+    },
+    {
+      label: wakeWordMuted ? '🎙️ Unmute Wake-Word (Turn On "Hey Bob")' : '🎙️ Mute Wake-Word (Meeting / Video Mode)',
+      click: () => toggleWakeWordMute()
     },
     {
       label: '🧠 Open Main Application',
