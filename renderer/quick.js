@@ -551,20 +551,37 @@ const bgRing = new Float32Array(16000 * 1.2); // 1.2s rolling buffer
 let bgRingPos = 0;
 let lastBgCheck = 0;
 let lastTriggerTime = 0;
-let bgChecking = false;
+let continuousVoiceMs = 0;
 
 function isWakeMatch(text) {
   const clean = (text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
-  const wakePhrases = [
-    'hey bob', 'hi bob', 'bob', 'bobby', 'hey bobby', 'hi bobby',
-    'hey pop', 'hey rob', 'hey baub', 'hey bawb',
-    'hey rishi', 'hi rishi', 'rishi', 'reeshi', 'richie', 'richy',
-    'did you see', 'you see'
+  if (!clean || clean.length < 3) return false;
+
+  // Strict exact wake phrases with word boundaries
+  const exactPhrases = [
+    'hey bob', 'hi bob', 'okay bob', 'ok bob', 'hey bobby', 'hi bobby',
+    'hey rishi', 'hi rishi'
   ];
-  if (wakePhrases.some(p => clean.includes(p))) return true;
+  if (exactPhrases.some(p => clean.includes(p))) return true;
+
+  // Standalone word 'bob' / 'bobby' (only if total utterance is short, <= 4 words)
   const words = clean.split(/\s+/);
-  return words.some(w => ['bob', 'bobby', 'rishi', 'reeshi', 'richie', 'richy', 'rish'].includes(w));
+  if (words.includes('bob') || words.includes('bobby')) {
+    if (words.length <= 4) return true;
+  }
+
+  return false;
 }
+
+let isWakeWordMuted = false;
+window.brain?.onWakeWordMuted?.((muted) => {
+  isWakeWordMuted = !!muted;
+  if (isWakeWordMuted) {
+    showStatus('🔴 Muted (Meeting Mode Active)');
+  } else {
+    showStatus('Listening for "Hey Bob"…');
+  }
+});
 
 async function initBackgroundWakeWord() {
   if (bgStream) return;
@@ -582,8 +599,8 @@ async function initBackgroundWakeWord() {
     bgProcessor = bgContext.createScriptProcessor(1024, 1, 1);
 
     bgProcessor.onaudioprocess = async (e) => {
-      // If window is currently actively recording or busy, skip background check
-      if (state.recording || state.busy) return;
+      // If window is currently actively recording, busy, or wake-word is muted, skip background check
+      if (state.recording || state.busy || isWakeWordMuted) return;
 
       const now = Date.now();
       if (now - lastTriggerTime < 800) return; // 800ms cooldown after trigger
@@ -596,14 +613,24 @@ async function initBackgroundWakeWord() {
       for (let i = 0; i < resampled.length; i++) sumSq += resampled[i] * resampled[i];
       const rms = Math.sqrt(sumSq / resampled.length);
 
+      // Continuous Voice / Video / Meeting Gate: track continuous uninterrupted sound
+      if (rms >= 0.003) {
+        continuousVoiceMs += (1024 / bgContext.sampleRate) * 1000;
+      } else {
+        continuousVoiceMs = Math.max(0, continuousVoiceMs - 200);
+      }
+
       // Write to ring buffer
       for (let i = 0; i < resampled.length; i++) {
         bgRing[bgRingPos] = resampled[i];
         bgRingPos = (bgRingPos + 1) % bgRing.length;
       }
 
-      // If voice energy is detected (sensitive for far-field room voice) and at least 200ms since last check
-      if (rms >= 0.002 && (now - lastBgCheck >= 200) && !bgChecking) {
+      // If continuous audio has been playing for > 3.5 seconds (video playback / Zoom meeting), suppress trigger
+      if (continuousVoiceMs > 3500) return;
+
+      // If voice energy is detected and at least 250ms since last check
+      if (rms >= 0.0025 && (now - lastBgCheck >= 250) && !bgChecking) {
         lastBgCheck = now;
         bgChecking = true;
 

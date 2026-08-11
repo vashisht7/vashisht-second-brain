@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('brain', {
   onQuickFocus: (callback) => ipcRenderer.on('quick-focus', callback),
   onQuickVoiceStart: (callback) => ipcRenderer.on('quick-voice-start', callback),
   onQuickVoiceStop: (callback) => ipcRenderer.on('quick-voice-stop', callback),
+  onWakeWordMuted: (callback) => ipcRenderer.on('set-wake-word-muted', (_, muted) => callback(muted)),
   addFiles: () => ipcRenderer.invoke('add-files'),
   addImages: () => ipcRenderer.invoke('add-images'),
   openPath: (target) => ipcRenderer.invoke('open-path', target),
